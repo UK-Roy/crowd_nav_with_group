@@ -9,16 +9,16 @@ ObservableState = namedtuple('ObservableState', ['px', 'py', 'vx', 'vy', 'radius
 # self.human_states is a list of ObservableStates
 class JointState(object):
     # self_state: list of length 9
-    # human_states: list of length human_num*5 or nested list [human_num, 5]
+    # human_states: list of length human_num*6 or nested list [human_num, 6]
     def __init__(self, self_state, human_states):
         assert len(self_state) == 9
         human_states_namedtuple = []
-        # if human states is a nested list [human_num, 5]
+        # if human states is a nested list [human_num, 6]
         if len(np.shape(human_states)) == 2:
             for human_state in human_states:
                 assert len(human_state) == 5
                 human_states_namedtuple.append(ObservableState(*human_state))
-        # if human states is a flatten list of length human_num*5
+        # if human states is a flatten list of length human_num*6
         else:
             assert len(human_states) % 5 == 0
             human_num = len(human_states) // 5

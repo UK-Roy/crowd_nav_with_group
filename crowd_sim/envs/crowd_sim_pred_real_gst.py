@@ -51,7 +51,7 @@ class CrowdSimPredRealGST(CrowdSimPred):
         # whether each human is visible to robot (ordered by human ID, should not be sorted)
         d['visible_masks'] = gym.spaces.Box(low=-np.inf, high=np.inf,
                                             shape=(self.config.sim.human_num + self.config.sim.human_num_range,),
-                                            dtype=np.bool)
+                                            dtype=bool)
 
         # number of humans detected at each timestep
         d['detected_human_num'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
@@ -110,6 +110,9 @@ class CrowdSimPredRealGST(CrowdSimPred):
         import matplotlib.lines as mlines
         from matplotlib import patches
 
+        
+        # print(f"Render from GST")
+
         plt.rcParams['animation.ffmpeg_path'] = '/usr/bin/ffmpeg'
 
         robot_color = 'gold'
@@ -129,8 +132,6 @@ class CrowdSimPredRealGST(CrowdSimPred):
             # increase the distance between the line start point and the end point
             newPoint = [extendFactor * newPoint[0, 0], extendFactor * newPoint[1, 0], 1]
             return newPoint
-
-
 
         ax=self.render_axis
         artists=[]
@@ -201,8 +202,34 @@ class CrowdSimPredRealGST(CrowdSimPred):
 
         # add humans and change the color of them based on visibility
         human_circles = [plt.Circle(human.get_position(), human.radius, fill=False, linewidth=1.5) for human in self.humans]
+        
+        # Create a list of colors for different groups
+        group_colors = ['purple', 'orange', 'green', 'red', 'yellow']
+
+        # Modify the human_circles to fill for group members and assign colors
+        human_circles = []
+        # count = 0
+        for human in self.humans:
+            # Check if the human is part of a group
+            if human.group_id is not None:
+                # Assign a color based on the group_id
+                group_color = group_colors[human.group_id % len(group_colors)]
+                # Create a filled circle for group members
+                circle = plt.Circle(human.get_position(), human.radius, facecolor=group_color, fill=True, linewidth=1.5)
+                # count += 1
+            else:
+                # Create a non-filled circle for individuals
+                circle = plt.Circle(human.get_position(), human.radius, fill=False, linewidth=1.5)
+
+            human_circles.append(circle)
+        # Optionally, you can add a legend to show which color represents which group
+        # for i, color in enumerate(group_colors):
+        #     ax.plot([], [], color=color, label=f'Group {i}')
+        # ax.plot([], [], color='gray', label='Individual')
+        # ax.legend()
 
         # hardcoded for now
+
         actual_arena_size = self.arena_size + 0.5
 
         # plot the current human states
@@ -212,9 +239,13 @@ class CrowdSimPredRealGST(CrowdSimPred):
 
             # green: visible; red: invisible
             if self.human_visibility[i]:
-                human_circles[i].set_color(c='b')
+                # human_circles[i].set_color(c='b')
+                human_circles[i].set_edgecolor('yellow')
             else:
-                human_circles[i].set_color(c='r')
+                # human_circles[i].set_color(c='r')
+                human_circles[i].set_edgecolor('blue')
+                # if self.humans[i].group_id is not None:
+
 
             if -actual_arena_size <= self.humans[i].px <= actual_arena_size and -actual_arena_size <= self.humans[
                 i].py <= actual_arena_size:

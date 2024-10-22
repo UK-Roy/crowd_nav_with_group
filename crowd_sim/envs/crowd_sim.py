@@ -54,6 +54,15 @@ class CrowdSim(gym.Env):
         self.action_space=None
         self.observation_space=None
 
+        # Group Dynamics
+        self.group_counter = 0
+        self.num_groups = 3
+        self.group_size = 3
+        self.group_base_positions = {}  # Store base positions for groups
+        self.group_circle_radius = 10
+        self.leader = {}
+        self.leader_act = {}
+
         # limit FOV
         self.robot_fov = None
         self.human_fov = None
@@ -128,7 +137,7 @@ class CrowdSim(gym.Env):
         # set dummy human and dummy robot
         # dummy humans, used if any human is not in view of other agents
         self.dummy_human = Human(self.config, 'humans')
-        # if a human is not in view, set its state to (px = 100, py = 100, vx = 0, vy = 0, theta = 0, radius = 0)
+        # if a human is not in view, set its state to (px = 100, py = 100, vx = 0, vy = 0, theta = 0, radius = 0, group_id=None)
         self.dummy_human.set(7, 7, 7, 7, 0, 0, 0) # (7, 7, 7, 7, 0, 0, 0)
         self.dummy_human.time_step = config.env.time_step
 
@@ -174,8 +183,6 @@ class CrowdSim(gym.Env):
         # use dummy robot and human states or use detected states from sensors
         self.use_dummy_detect = config.sim2real.use_dummy_detect
 
-
-
         # prediction period / control (or simulation) period
         self.pred_interval = int(config.data.pred_timestep // config.env.time_step)
         self.buffer_len = self.predict_steps * self.pred_interval
@@ -195,14 +202,102 @@ class CrowdSim(gym.Env):
         :param human_num: the total number of humans to be generated
         :return: None
         """
-        # initial min separation distance to avoid danger penalty at beginning
+        # Determine which group will be positioned near the goal
+        if self.num_groups > 0:
+            group_near_goal = np.random.randint(self.num_groups)
+
+            fraction = 0.8
+            base_x = self.robot.px + fraction * (self.robot.gx - self.robot.px)
+            base_y = self.robot.py + fraction * (self.robot.gy - self.robot.py)
+            
+            # noise_range = 3
+            # px_noise = np.random.uniform(0, 1) * noise_range
+            # py_noise = np.random.uniform(0, 1) * noise_range
+            # base_x = goal_x + px_noise
+            # base_y = goal_y + py_noise
+
+            self.group_base_positions[group_near_goal] = (base_x, base_y)
+
+        
+        # Generate humans with group behavior and randomness for individuals
         for i in range(human_num):
-            self.humans.append(self.generate_circle_crossing_human())
+            human = self.generate_circle_crossing_human(i)
+
+            if human.group_id is not None:
+                # Check if the group already has a base position
+                if human.group_id not in self.group_base_positions:
+                    # If no base exists, generate a new base for this group
+                    base_x, base_y = np.random.uniform(-self.group_circle_radius, self.group_circle_radius, 2)
+                    self.group_base_positions[human.group_id] = (base_x, base_y)
+                else:
+                    # If a base already exists, use it
+                    base_x, base_y = self.group_base_positions[human.group_id]
+                
+                # Position other groups randomly but with members close to each other
+                self.position_group_randomly(human, base_x, base_y)
+                if human.group_id == group_near_goal:
+                    human.isObstacle = True
+
+            else:
+                # Random positioning for individuals
+                self.humans.append(human)
+        
+        # initial min separation distance to avoid danger penalty at beginning
+        # for i in range(human_num):
+        #     self.humans.append(self.generate_circle_crossing_human(i))
+    
+    # 4. Helper function to position other group members close together, but scattered
+    def position_group_randomly(self, human, base_x, base_y):
+        """
+        Position group members randomly within the environment but keep them close to each other.
+        Members of the same group will have the same base position.
+        """
+        while True:
+            angle = np.random.random() * np.pi * 2
+            # add some noise to simulate all the possible cases robot could meet with human
+            noise_range = 2
+            distance_from_base = np.random.uniform(0, 1) * noise_range
+            px = base_x + distance_from_base * np.cos(angle)
+            py = base_y + distance_from_base * np.sin(angle)
+       
+            collide = False
+            agent_group = [h for h in self.humans if h.group_id == human.group_id]
+            for i, agent in enumerate([self.robot] + agent_group):
+                
+                min_dist = human.radius + agent.radius + 0.1
+                if norm((px - agent.px, py - agent.py)) < min_dist or \
+                        norm((px - agent.gx, py - agent.gy)) < min_dist:
+                    collide = True
+                    break
+            if not collide:
+                break
+
+        # Set the human's position and add to the humans list
+        human.set(px, py, -px, -py, 0, 0, human.radius)
+        self.humans.append(human)
+    
+    # 5. Helper function to position a group near the goal
+    # def position_group_near_goal(self, human, goal_x, goal_y):
+    #     """
+    #     This function places group members close to each other near the robot's goal position.
+    #     """
+    #     angle = np.random.uniform(0, np.pi * 2) / 10  # Small deviation around the goal
+    #     distance_from_goal = np.random.uniform(0.5, 1.5)  # Close to the goal
+    #     px = goal_x + distance_from_goal * np.cos(angle)
+    #     py = goal_y + distance_from_goal * np.sin(angle)
+
+    #     # Ensure the group is between the robot and goal
+    #     if np.linalg.norm([px - self.robot.px, py - self.robot.py]) > np.linalg.norm([goal_x - self.robot.px, goal_y - self.robot.py]):
+    #         px, py = self.robot.px, self.robot.py  # Reposition to ensure it's between robot and goal
+
+    #     human.set(px, py, goal_x, goal_y, 0, 0, human.radius)
+    #     self.humans.append(human)
 
 
-    def generate_circle_crossing_human(self):
+    def generate_circle_crossing_human(self, current_human_num):
         """Generate a human: generate start position on a circle, goal position is at the opposite side"""
         human = Human(self.config, 'humans')
+
         if self.randomize_attributes:
             human.sample_random_attributes()
 
@@ -235,7 +330,18 @@ class CrowdSim(gym.Env):
         human.set(px, py, -px, -py, 0, 0, 0)
         return human
 
-
+    # Assign for creating groups
+    def assign_groups(self, i):
+        if self.group_counter < self.num_groups:
+                if i < self.group_size * (self.group_counter + 1):
+                    pass
+                else:
+                    self.group_counter += 1
+                    if self.group_counter == self.num_groups:
+                        return None
+                return self.group_counter
+        else:
+            return None  # No group
 
     # update the robot belief of human states
     # if a human is visible, its state is updated to its current ground truth state
@@ -260,7 +366,7 @@ class CrowdSim(gym.Env):
 
                 else:
                     # Plan A: linear approximation of human's next position
-                    px, py, vx, vy, r = self.last_human_states[i, :]
+                    px, py, vx, vy, r= self.last_human_states[i, :]
                     px = px + vx * self.time_step
                     py = py + vy * self.time_step
                     self.last_human_states[i, :] = np.array([px, py, vx, vy, r])
@@ -572,7 +678,6 @@ class CrowdSim(gym.Env):
         return humans_in_view, num_humans_in_view, human_ids
 
 
-
     def last_human_states_obj(self):
         '''
         convert self.last_human_states to a list of observable state objects for old algorithms to use
@@ -697,8 +802,25 @@ class CrowdSim(gym.Env):
                     ob += [self.robot.get_observable_state()]
                 else:
                     ob += [self.dummy_robot.get_observable_state()]
+            
+            if human.group_id is None:
+                human_actions.append(human.act(ob))
+            else:
+                if human.group_id in self.leader:
+                    if human == self.leader[human.group_id]:
+                        action = human.act(ob)
+                        self.leader_act[human.group_id] = action
+                    else:
+                        # if not human.isObstacle:
+                            # action = human.follow_leader_avoid_other(ob, self.leader[human.group_id])
+                        action = self.leader_act[human.group_id]
 
-            human_actions.append(human.act(ob))
+                else:
+                    self.leader[human.group_id] = human
+                    action = human.act(ob)
+                    self.leader_act[human.group_id] = action
+                
+                human_actions.append(action)
 
         return human_actions
 

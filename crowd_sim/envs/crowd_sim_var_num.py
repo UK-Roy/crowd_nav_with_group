@@ -2,6 +2,7 @@ import gym
 import numpy as np
 from numpy.linalg import norm
 import copy
+from sklearn.cluster import DBSCAN
 
 from crowd_sim.envs.utils.action import ActionRot, ActionXY
 from crowd_sim.envs import *
@@ -51,7 +52,7 @@ class CrowdSimVarNum(CrowdSim):
         # whether each human is visible to robot (ordered by human ID, should not be sorted)
         d['visible_masks'] = gym.spaces.Box(low=-np.inf, high=np.inf,
                                             shape=(self.max_human_num,),
-                                            dtype=np.bool)
+                                            dtype=bool)
         self.observation_space=gym.spaces.Dict(d)
 
         high = np.inf * np.ones([2, ])
@@ -103,7 +104,6 @@ class CrowdSimVarNum(CrowdSim):
                 self.human_num = np.random.randint(low=self.config.sim.human_num - self.human_num_range,
                                                    high=self.config.sim.human_num + self.human_num_range + 1)
 
-
             self.generate_random_human_position(human_num=self.human_num)
             self.last_human_states = np.zeros((self.human_num, 5))
             # set human ids
@@ -113,8 +113,10 @@ class CrowdSimVarNum(CrowdSim):
 
 
     # generate a human that starts on a circle, and its goal is on the opposite side of the circle
-    def generate_circle_crossing_human(self):
+    def generate_circle_crossing_human(self, current_human_num):
         human = Human(self.config, 'humans')
+        human.set_group(self.assign_groups(current_human_num))
+
         if self.randomize_attributes:
             human.sample_random_attributes()
 
@@ -230,11 +232,137 @@ class CrowdSimVarNum(CrowdSim):
 
     # reset = True: reset calls this function; reset = False: step calls this function
     # sorted: sort all humans by distance to robot or not
+    # def generate_ob(self, reset, sort=False):
+    #     """Generate observation for reset and step functions"""
+    #     ob = {}
+
+    #     # nodes
+    #     visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
+
+    #     ob['robot_node'] = self.robot.get_full_state_list_noV()
+
+    #     prev_human_pos = copy.deepcopy(self.last_human_states)
+    #     self.update_last_human_states(self.human_visibility, reset=reset)
+
+    #     # edges
+    #     ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
+
+    #     # ([relative px, relative py, disp_x, disp_y], human id)
+    #     all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf
+
+    #     for i in range(self.human_num):
+    #         if self.human_visibility[i]:
+    #             # vector pointing from human i to robot
+    #             relative_pos = np.array(
+    #                 [self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
+    #             all_spatial_edges[self.humans[i].id, :2] = relative_pos
+
+    #     ob['visible_masks'] = np.zeros(self.max_human_num, dtype=bool)
+    #     # sort all humans by distance (invisible humans will be in the end automatically)
+    #     if sort:
+    #         ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x)))
+    #         # after sorting, the visible humans must be in the front
+    #         if num_visibles > 0:
+    #             ob['visible_masks'][:num_visibles] = True
+    #     else:
+    #         ob['spatial_edges'] = all_spatial_edges
+    #         ob['visible_masks'][:self.human_num] = self.human_visibility
+    #     ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
+    #     ob['detected_human_num'] = num_visibles
+    #     # if no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
+    #     if ob['detected_human_num'] == 0:
+    #         ob['detected_human_num'] = 1
+
+    #     # update self.observed_human_ids
+    #     self.observed_human_ids = np.where(self.human_visibility)[0]
+
+    #     self.ob = ob
+
+    #     return ob 
+
+    # def generate_ob(self, reset, sort=False):
+    #     """Generate observation for reset and step functions"""
+    #     ob = {}
+
+    #     # nodes
+    #     visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
+
+    #     ob['robot_node'] = self.robot.get_full_state_list_noV()
+
+    #     prev_human_pos = copy.deepcopy(self.last_human_states)
+    #     self.update_last_human_states(self.human_visibility, reset=reset)
+
+    #     # edges
+    #     ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
+
+    #     # ([relative px, relative py, disp_x, disp_y], human id)
+    #     all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf
+
+    #     # Collect the positions and IDs of visible humans for clustering
+    #     visible_positions = []
+    #     visible_human_ids = []
+    #     for i in range(self.human_num):
+    #         if self.human_visibility[i]:
+    #             # vector pointing from human i to robot
+    #             relative_pos = np.array([self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
+    #             all_spatial_edges[self.humans[i].id, :2] = relative_pos
+    #             visible_positions.append([self.last_human_states[i, 0], self.last_human_states[i, 1]])
+    #             visible_human_ids.append(self.humans[i].id)  # Track human_id
+
+    #     # Cluster humans based on their positions using DBSCAN
+    #     if len(visible_positions) > 0:
+    #         visible_positions = np.array(visible_positions)
+    #         # DBSCAN parameters: eps is the max distance between points in a cluster, min_samples is the min number of points to form a cluster
+    #         clustering = DBSCAN(eps=1.8, min_samples=2).fit(visible_positions)
+    #         cluster_labels = clustering.labels_  # Cluster labels for each human (noise is labeled -1)
+
+    #         # Create a dictionary to track which human_ids belong to each group (cluster)
+    #         cluster_dict = {}
+    #         for idx, cluster_label in enumerate(cluster_labels):
+    #             human_id = visible_human_ids[idx]
+    #             if cluster_label != -1:  # Ignore noise (-1)
+    #                 if cluster_label not in cluster_dict:
+    #                     cluster_dict[cluster_label] = []
+    #                 cluster_dict[cluster_label].append(human_id)
+
+    #         # Add group/cluster information to the observation
+    #         ob['clusters'] = cluster_labels  # Cluster labels for each human
+    #         ob['group_members'] = cluster_dict  # Dictionary mapping group_id (cluster_label) to human_ids
+    #     else:
+    #         ob['clusters'] = np.array([])  # No clusters if no humans are visible
+    #         ob['group_members'] = {}  # No group members detected
+        
+    #     print(f"Clusters:{ob['clusters']}\nHumanId: {ob['group_members']}")
+
+    #     ob['visible_masks'] = np.zeros(self.max_human_num, dtype=bool)
+    #     # Sort all humans by distance (invisible humans will be in the end automatically)
+    #     if sort:
+    #         ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x)))
+    #         # After sorting, the visible humans must be in the front
+    #         if num_visibles > 0:
+    #             ob['visible_masks'][:num_visibles] = True
+    #     else:
+    #         ob['spatial_edges'] = all_spatial_edges
+    #         ob['visible_masks'][:self.human_num] = self.human_visibility
+
+    #     ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
+    #     ob['detected_human_num'] = num_visibles
+    #     # If no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
+    #     if ob['detected_human_num'] == 0:
+    #         ob['detected_human_num'] = 1
+
+    #     # Update self.observed_human_ids
+    #     self.observed_human_ids = np.where(self.human_visibility)[0]
+
+    #     self.ob = ob
+
+    #     return ob
+    
     def generate_ob(self, reset, sort=False):
-        """Generate observation for reset and step functions"""
+        """Generate observation for reset and step functions, including velocity features"""
         ob = {}
 
-        # nodes
+        # Nodes (robot and human states)
         visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
 
         ob['robot_node'] = self.robot.get_full_state_list_noV()
@@ -242,43 +370,91 @@ class CrowdSimVarNum(CrowdSim):
         prev_human_pos = copy.deepcopy(self.last_human_states)
         self.update_last_human_states(self.human_visibility, reset=reset)
 
-        # edges
+        # Edges (robot velocity)
         ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
 
-        # ([relative px, relative py, disp_x, disp_y], human id)
-        all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf
+        # Initialize spatial and velocity arrays
+        all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf  # [relative_px, relative_py, vx, vy]
+        all_velocity_edges = np.ones((self.max_human_num, 2)) * np.inf  # [relative_px, relative_py, vx, vy]
+
+        # Collect positions, velocities, and IDs of visible humans for clustering
+        visible_positions = []
+        visible_velocities = []
+        visible_human_ids = []
 
         for i in range(self.human_num):
             if self.human_visibility[i]:
-                # vector pointing from human i to robot
-                relative_pos = np.array(
-                    [self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
-                all_spatial_edges[self.humans[i].id, :2] = relative_pos
+                # Relative position to the robot
+                relative_pos = np.array([self.last_human_states[i, 0] - self.robot.px, 
+                                        self.last_human_states[i, 1] - self.robot.py])
 
-        ob['visible_masks'] = np.zeros(self.max_human_num, dtype=np.bool)
-        # sort all humans by distance (invisible humans will be in the end automatically)
+                # Velocity of the human
+                velocity = np.array([self.last_human_states[i, 2], self.last_human_states[i, 3]])
+
+                # Store spatial and velocity features
+                all_spatial_edges[self.humans[i].id, :2] = relative_pos
+                all_velocity_edges[self.humans[i].id, :2] = velocity
+
+                visible_positions.append([self.last_human_states[i, 0], self.last_human_states[i, 1]])
+                visible_velocities.append([self.last_human_states[i, 2], self.last_human_states[i, 3]])
+                visible_human_ids.append(self.humans[i].id)  # Track human_id
+
+        # Cluster humans based on positions and velocities using DBSCAN
+        if len(visible_positions) > 0:
+            visible_positions = np.array(visible_positions)
+            visible_velocities = np.array(visible_velocities)
+
+            # Combine positions and velocities for clustering
+            pos_vel_features = np.hstack((visible_positions, visible_velocities))
+
+            # DBSCAN parameters: eps is the max distance between points in a cluster, min_samples is the min number of points to form a cluster
+            clustering = DBSCAN(eps=1.6, min_samples=2).fit(pos_vel_features)
+            cluster_labels = clustering.labels_  # Cluster labels for each human (noise is labeled -1)
+
+            # Create a dictionary to track which human_ids belong to each group (cluster)
+            cluster_dict = {}
+            for idx, cluster_label in enumerate(cluster_labels):
+                human_id = visible_human_ids[idx]
+                if cluster_label != -1:  # Ignore noise (-1)
+                    if cluster_label not in cluster_dict:
+                        cluster_dict[cluster_label] = []
+                    cluster_dict[cluster_label].append(human_id)
+
+            # Add group/cluster information to the observation
+            ob['clusters'] = cluster_labels  # Cluster labels for each human
+            ob['group_members'] = cluster_dict  # Dictionary mapping group_id (cluster_label) to human_ids
+        else:
+            ob['clusters'] = np.array([])  # No clusters if no humans are visible
+            ob['group_members'] = {}  # No group members detected
+        
+        print(f"Clusters:{ob['clusters']}\nHumanId: {ob['group_members']}")
+
+        ob['visible_masks'] = np.zeros(self.max_human_num, dtype=bool)
+
+        # Sort all humans by distance (invisible humans will be in the end automatically)
         if sort:
-            ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x)))
-            # after sorting, the visible humans must be in the front
+            ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x[:2])))
+            # After sorting, the visible humans must be in the front
             if num_visibles > 0:
                 ob['visible_masks'][:num_visibles] = True
         else:
             ob['spatial_edges'] = all_spatial_edges
             ob['visible_masks'][:self.human_num] = self.human_visibility
+
         ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
         ob['detected_human_num'] = num_visibles
-        # if no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
+        # If no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
         if ob['detected_human_num'] == 0:
             ob['detected_human_num'] = 1
 
-        # update self.observed_human_ids
+        # Update self.observed_human_ids
         self.observed_human_ids = np.where(self.human_visibility)[0]
 
         self.ob = ob
 
         return ob
 
-
+    
 
     # Update the specified human's end goals in the environment randomly
     def update_human_pos_goal(self, human):
@@ -322,6 +498,9 @@ class CrowdSimVarNum(CrowdSim):
 
 
         self.humans = []
+        self.group_counter = 0
+        self.leader = {}
+        self.leader_act = {}
         # self.human_num = self.config.sim.human_num
         # initialize a list to store observed humans' IDs
         self.observed_human_ids = []
@@ -452,7 +631,7 @@ class CrowdSimVarNum(CrowdSim):
             for i, human in enumerate(self.humans):
                 if norm((human.gx - human.px, human.gy - human.py)) < human.radius:
                     if self.robot.kinematics == 'holonomic':
-                        self.humans[i] = self.generate_circle_crossing_human()
+                        self.humans[i] = self.generate_circle_crossing_human(i)
                         self.humans[i].id = i
                     else:
                         self.update_human_goal(human)

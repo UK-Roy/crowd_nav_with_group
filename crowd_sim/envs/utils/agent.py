@@ -95,7 +95,7 @@ class Agent(object):
             next_theta = self.theta + action.r
             next_vx = action.v * np.cos(next_theta)
             next_vy = action.v * np.sin(next_theta)
-        return ObservableState(next_px, next_py, next_vx, next_vy, self.radius)
+        return ObservableState(next_px, next_py, next_vx, next_vy, self.radius, self.group_id)
 
     def get_full_state(self):
         return FullState(self.px, self.py, self.vx, self.vy, self.radius, self.gx, self.gy, self.v_pref, self.theta)
@@ -119,7 +119,6 @@ class Agent(object):
 
     def get_velocity(self):
         return self.vx, self.vy
-
 
     def set_velocity(self, velocity):
         self.vx = velocity[0]

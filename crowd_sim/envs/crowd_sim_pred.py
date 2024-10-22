@@ -207,7 +207,7 @@ class CrowdSimPred(CrowdSimVarNum):
         if self.end_goal_changing and not self.record:
             for i, human in enumerate(self.humans):
                 if norm((human.gx - human.px, human.gy - human.py)) < human.radius:
-                    self.humans[i] = self.generate_circle_crossing_human()
+                    self.humans[i] = self.generate_circle_crossing_human(i)
                     self.humans[i].id = i
 
         return ob, reward, done, info
@@ -238,6 +238,8 @@ class CrowdSimPred(CrowdSimVarNum):
         import matplotlib.pyplot as plt
         import matplotlib.lines as mlines
         from matplotlib import patches
+
+        # print(f"Render from Crowd Sim Pred")
 
         plt.rcParams['animation.ffmpeg_path'] = '/usr/bin/ffmpeg'
 

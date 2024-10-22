@@ -110,7 +110,7 @@ class Config(object):
     # action space of the robot
     action_space = BaseConfig()
     # holonomic or unicycle
-    action_space.kinematics = "unicycle"
+    action_space.kinematics = "holonomic"
 
     # config for ORCA
     orca = BaseConfig()
