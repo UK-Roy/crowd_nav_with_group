@@ -201,7 +201,8 @@ class VecPyTorch(VecEnvWrapper):
         obs = self.venv.reset()
         if isinstance(obs, dict):
             for key in obs:
-                obs[key]=torch.from_numpy(obs[key]).to(self.device)
+                if key not in ['group_members']:
+                    obs[key]=torch.from_numpy(obs[key]).to(self.device)
         else:
             obs = torch.from_numpy(obs).float().to(self.device)
         return obs

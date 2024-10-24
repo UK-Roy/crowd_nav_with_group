@@ -74,42 +74,42 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             if not done:
                 global_time = baseEnv.global_time
             
-            if grp_obs:
-                # Identify detected groups and calculate their positions
-                detected_groups = self.ob.get('group_members', {})
+            # if grp_obs:
+            #     # Identify detected groups and calculate their positions
+            #     detected_groups = self.ob.get('group_members', {})
                 
-                if detected_groups:
-                    group_centroids = grp_obs['group_centroids']
-                    group_radii = grp_obs['group_radii']
+            #     if detected_groups:
+            #         group_centroids = grp_obs['group_centroids']
+            #         group_radii = grp_obs['group_radii']
                     
-                    # Calculate the robot's initial intended position if it executes the action
-                    intended_position = np.array([self.robot.px + action.vx * self.time_step, self.robot.py + action.vy * self.time_step])
+            #         # Calculate the robot's initial intended position if it executes the action
+            #         intended_position = np.array([self.robot.px + action.vx * self.time_step, self.robot.py + action.vy * self.time_step])
                 
-                    # Now adjust the robot's velocity based on group avoidance
-                    for centroid, radius in zip(group_centroids, group_radii):
-                        # Calculate the distance from the robot's intended position to the group's centroid
-                        distance_to_group = np.linalg.norm(intended_position - centroid)
+            #         # Now adjust the robot's velocity based on group avoidance
+            #         for centroid, radius in zip(group_centroids, group_radii):
+            #             # Calculate the distance from the robot's intended position to the group's centroid
+            #             distance_to_group = np.linalg.norm(intended_position - centroid)
 
-                        if distance_to_group < radius:
-                            # Group is too close, modify the robot's action to avoid the group
+            #             if distance_to_group < radius:
+            #                 # Group is too close, modify the robot's action to avoid the group
 
-                            # Calculate vector away from the group
-                            avoid_vector = intended_position - centroid
-                            avoid_vector /= np.linalg.norm(avoid_vector)  # Normalize the vector
+            #                 # Calculate vector away from the group
+            #                 avoid_vector = intended_position - centroid
+            #                 avoid_vector /= np.linalg.norm(avoid_vector)  # Normalize the vector
 
-                            # Adjust the robot's velocity vector to steer away from the group
-                            avoidance_strength = 1.5  # How strongly to avoid the group
-                            adjusted_velocity = np.array([action.vx, action.vy]) + avoid_vector * avoidance_strength
+            #                 # Adjust the robot's velocity vector to steer away from the group
+            #                 avoidance_strength = 1.5  # How strongly to avoid the group
+            #                 adjusted_velocity = np.array([action.vx, action.vy]) + avoid_vector * avoidance_strength
 
-                            # Ensure the robot maintains a reasonable velocity (limit the magnitude of velocity)
-                            max_velocity = self.robot.v_pref
-                            if np.linalg.norm(adjusted_velocity) > max_velocity:
-                                adjusted_velocity = (adjusted_velocity / np.linalg.norm(adjusted_velocity)) * max_velocity
+            #                 # Ensure the robot maintains a reasonable velocity (limit the magnitude of velocity)
+            #                 max_velocity = self.robot.v_pref
+            #                 if np.linalg.norm(adjusted_velocity) > max_velocity:
+            #                     adjusted_velocity = (adjusted_velocity / np.linalg.norm(adjusted_velocity)) * max_velocity
 
-                            # Set the robot's new velocity
-                            action.vx, action.vy = adjusted_velocity[0], adjusted_velocity[1]
+            #                 # Set the robot's new velocity
+            #                 action.vx, action.vy = adjusted_velocity[0], adjusted_velocity[1]
                             
-                            break  # Only adjust for the nearest group
+            #                 break  # Only adjust for the nearest group
 
             # if the vec_pretext_normalize.py wrapper is used, send the predicted traj to env
             if args.env_name == 'CrowdSimPredRealGST-v0' and config.env.use_wrapper:

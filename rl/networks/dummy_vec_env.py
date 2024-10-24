@@ -54,7 +54,7 @@ class DummyVecEnv(VecEnv):
             self._save_obs(e, obs)
             
             # News keys added for group detections
-            keys = {'velocity_edges', 'direction_consistency', 'clusters', 'group_members', 'group_centroids', 'group_radii'}
+            keys = {'velocity_edges', 'direction_consistency', 'clusters', 'group_members'}
             for k in keys:
                 self.buf_obs[k] = obs[k]
             # Identify detected groups and calculate their positions
