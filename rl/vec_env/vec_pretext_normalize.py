@@ -176,12 +176,20 @@ class VecPretextNormalize(VecEnvWrapper):
         # sorted_idx = sorted_idx.unsqueeze(-1).repeat(1, 1, 2*(self.config.sim.predict_steps+1))
         for i in range(self.num_envs):
             O['spatial_edges'][i] = O['spatial_edges'][i][sorted_idx[i]]
+        
+        # Group Keys added
+        grp = {}
+        grp_key = ['velocity_edges','direction_consistency', 'clusters', 'group_members', 'group_centroids', 'group_radii']
+        for key,val in O.items():
+            if key in grp_key:
+                grp[key] = val
 
         obs={'robot_node':O['robot_node'],
             'spatial_edges':O['spatial_edges'],
             'temporal_edges':O['temporal_edges'],
             'visible_masks':O['visible_masks'],
-             'detected_human_num': O['detected_human_num'],
+            'detected_human_num': O['detected_human_num'],
+            'grp': grp 
 
         }
 

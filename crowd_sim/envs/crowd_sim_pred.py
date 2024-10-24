@@ -7,7 +7,6 @@ from crowd_sim.envs.utils.action import ActionRot, ActionXY
 from crowd_sim.envs.crowd_sim_var_num import CrowdSimVarNum
 
 
-
 class CrowdSimPred(CrowdSimVarNum):
     """
     The environment for our model with non-neural network trajectory predictors, including const vel predictor and ground truth predictor

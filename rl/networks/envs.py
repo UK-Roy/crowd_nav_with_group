@@ -217,7 +217,8 @@ class VecPyTorch(VecEnvWrapper):
         obs, reward, done, info = self.venv.step_wait()
         if isinstance(obs, dict):
             for key in obs:
-                obs[key] = torch.from_numpy(obs[key]).to(self.device)
+                if key not in ['group_members']:
+                    obs[key] = torch.from_numpy(obs[key]).to(self.device)
         else:
             obs = torch.from_numpy(obs).float().to(self.device)
         reward = torch.from_numpy(reward).unsqueeze(dim=1).float()

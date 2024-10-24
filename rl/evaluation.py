@@ -57,7 +57,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
         path_len = 0.
         too_close = 0.
         last_pos = obs['robot_node'][0, 0, :2].cpu().numpy()
-
+        grp_obs = {}
 
         while not done:
             stepCounter = stepCounter + 1
@@ -73,6 +73,43 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                 action = torch.zeros([1, 2], device=device)
             if not done:
                 global_time = baseEnv.global_time
+            
+            if grp_obs:
+                # Identify detected groups and calculate their positions
+                detected_groups = self.ob.get('group_members', {})
+                
+                if detected_groups:
+                    group_centroids = grp_obs['group_centroids']
+                    group_radii = grp_obs['group_radii']
+                    
+                    # Calculate the robot's initial intended position if it executes the action
+                    intended_position = np.array([self.robot.px + action.vx * self.time_step, self.robot.py + action.vy * self.time_step])
+                
+                    # Now adjust the robot's velocity based on group avoidance
+                    for centroid, radius in zip(group_centroids, group_radii):
+                        # Calculate the distance from the robot's intended position to the group's centroid
+                        distance_to_group = np.linalg.norm(intended_position - centroid)
+
+                        if distance_to_group < radius:
+                            # Group is too close, modify the robot's action to avoid the group
+
+                            # Calculate vector away from the group
+                            avoid_vector = intended_position - centroid
+                            avoid_vector /= np.linalg.norm(avoid_vector)  # Normalize the vector
+
+                            # Adjust the robot's velocity vector to steer away from the group
+                            avoidance_strength = 1.5  # How strongly to avoid the group
+                            adjusted_velocity = np.array([action.vx, action.vy]) + avoid_vector * avoidance_strength
+
+                            # Ensure the robot maintains a reasonable velocity (limit the magnitude of velocity)
+                            max_velocity = self.robot.v_pref
+                            if np.linalg.norm(adjusted_velocity) > max_velocity:
+                                adjusted_velocity = (adjusted_velocity / np.linalg.norm(adjusted_velocity)) * max_velocity
+
+                            # Set the robot's new velocity
+                            action.vx, action.vy = adjusted_velocity[0], adjusted_velocity[1]
+                            
+                            break  # Only adjust for the nearest group
 
             # if the vec_pretext_normalize.py wrapper is used, send the predicted traj to env
             if args.env_name == 'CrowdSimPredRealGST-v0' and config.env.use_wrapper:
@@ -86,6 +123,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
 
             # Obser reward and next obs
             obs, rew, done, infos = eval_envs.step(action)
+            grp_obs = obs.pop('grp')
 
             # record the info for calculating testing metrics
             rewards.append(rew)
@@ -93,13 +131,11 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             path_len = path_len + np.linalg.norm(obs['robot_node'][0, 0, :2].cpu().numpy() - last_pos)
             last_pos = obs['robot_node'][0, 0, :2].cpu().numpy()
 
-
             if isinstance(infos[0]['info'], Danger):
                 too_close = too_close + 1
                 min_dist.append(infos[0]['info'].min_dist)
 
             episode_rew += rew[0]
-
 
             eval_masks = torch.tensor(
                 [[0.0] if done_ else [1.0] for done_ in done],
@@ -116,7 +152,6 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
         print('Episode', k, 'ends in', stepCounter)
         all_path_len.append(path_len)
         too_close_ratios.append(too_close/stepCounter*100)
-
 
         if isinstance(infos[0]['info'], ReachGoal):
             success += 1

@@ -18,7 +18,7 @@ class Config(object):
     env.time_limit = 50
     env.time_step = 0.25
     env.val_size = 100
-    env.test_size = 500
+    env.test_size = 100
     # if randomize human behaviors, set to True, else set to False
     env.randomize_attributes = True
     env.num_processes = args.num_processes
@@ -67,7 +67,8 @@ class Config(object):
     humans = BaseConfig()
     humans.visible = True
     # orca or social_force for now
-    humans.policy = "orca"
+    # hybrid_orca_social_force
+    humans.policy = "hybrid_orca_social_force"
     humans.radius = 0.3
     humans.v_pref = 1
     humans.sensor = "coordinates"

@@ -88,6 +88,18 @@ class CrowdSimPredRealGST(CrowdSimPred):
         ob['temporal_edges'] = parent_ob['temporal_edges']
 
         ob['spatial_edges'] = np.tile(parent_ob['spatial_edges'], self.predict_steps+1)
+    
+        ob['velocity_edges'] = parent_ob['velocity_edges']
+        ob['direction_consistency'] = parent_ob['direction_consistency']
+        ob['clusters'] = parent_ob['clusters']
+        ob['group_members'] = parent_ob['group_members']
+        
+        # Identify detected groups and calculate their positions
+        detected_groups = parent_ob.get('group_members', {})
+        
+        if detected_groups:
+            ob['group_centroids'] = parent_ob['group_centroids']
+            ob['group_radii'] = parent_ob['group_radii']
 
         ob['detected_human_num'] = parent_ob['detected_human_num']
 

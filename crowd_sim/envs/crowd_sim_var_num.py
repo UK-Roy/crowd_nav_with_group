@@ -279,88 +279,15 @@ class CrowdSimVarNum(CrowdSim):
     #     self.ob = ob
 
     #     return ob 
-
-    # def generate_ob(self, reset, sort=False):
-    #     """Generate observation for reset and step functions"""
-    #     ob = {}
-
-    #     # nodes
-    #     visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
-
-    #     ob['robot_node'] = self.robot.get_full_state_list_noV()
-
-    #     prev_human_pos = copy.deepcopy(self.last_human_states)
-    #     self.update_last_human_states(self.human_visibility, reset=reset)
-
-    #     # edges
-    #     ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
-
-    #     # ([relative px, relative py, disp_x, disp_y], human id)
-    #     all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf
-
-    #     # Collect the positions and IDs of visible humans for clustering
-    #     visible_positions = []
-    #     visible_human_ids = []
-    #     for i in range(self.human_num):
-    #         if self.human_visibility[i]:
-    #             # vector pointing from human i to robot
-    #             relative_pos = np.array([self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
-    #             all_spatial_edges[self.humans[i].id, :2] = relative_pos
-    #             visible_positions.append([self.last_human_states[i, 0], self.last_human_states[i, 1]])
-    #             visible_human_ids.append(self.humans[i].id)  # Track human_id
-
-    #     # Cluster humans based on their positions using DBSCAN
-    #     if len(visible_positions) > 0:
-    #         visible_positions = np.array(visible_positions)
-    #         # DBSCAN parameters: eps is the max distance between points in a cluster, min_samples is the min number of points to form a cluster
-    #         clustering = DBSCAN(eps=1.8, min_samples=2).fit(visible_positions)
-    #         cluster_labels = clustering.labels_  # Cluster labels for each human (noise is labeled -1)
-
-    #         # Create a dictionary to track which human_ids belong to each group (cluster)
-    #         cluster_dict = {}
-    #         for idx, cluster_label in enumerate(cluster_labels):
-    #             human_id = visible_human_ids[idx]
-    #             if cluster_label != -1:  # Ignore noise (-1)
-    #                 if cluster_label not in cluster_dict:
-    #                     cluster_dict[cluster_label] = []
-    #                 cluster_dict[cluster_label].append(human_id)
-
-    #         # Add group/cluster information to the observation
-    #         ob['clusters'] = cluster_labels  # Cluster labels for each human
-    #         ob['group_members'] = cluster_dict  # Dictionary mapping group_id (cluster_label) to human_ids
-    #     else:
-    #         ob['clusters'] = np.array([])  # No clusters if no humans are visible
-    #         ob['group_members'] = {}  # No group members detected
-        
-    #     print(f"Clusters:{ob['clusters']}\nHumanId: {ob['group_members']}")
-
-    #     ob['visible_masks'] = np.zeros(self.max_human_num, dtype=bool)
-    #     # Sort all humans by distance (invisible humans will be in the end automatically)
-    #     if sort:
-    #         ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x)))
-    #         # After sorting, the visible humans must be in the front
-    #         if num_visibles > 0:
-    #             ob['visible_masks'][:num_visibles] = True
-    #     else:
-    #         ob['spatial_edges'] = all_spatial_edges
-    #         ob['visible_masks'][:self.human_num] = self.human_visibility
-
-    #     ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
-    #     ob['detected_human_num'] = num_visibles
-    #     # If no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
-    #     if ob['detected_human_num'] == 0:
-    #         ob['detected_human_num'] = 1
-
-    #     # Update self.observed_human_ids
-    #     self.observed_human_ids = np.where(self.human_visibility)[0]
-
-    #     self.ob = ob
-
-    #     return ob
     
     def generate_ob(self, reset, sort=False):
-        """Generate observation for reset and step functions, including velocity features"""
+        """Generate observation with added direction consistency for group detection."""
         ob = {}
+        eps_value = 1.0  # Adjust this to control clustering sensitivity
+        min_samples_value = 2  # Minimum number of points to form a group
+        spatial_weight = 0.8
+        velocity_weight = 1
+        directional_weight = 1
 
         # Nodes (robot and human states)
         visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
@@ -373,9 +300,10 @@ class CrowdSimVarNum(CrowdSim):
         # Edges (robot velocity)
         ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
 
-        # Initialize spatial and velocity arrays
-        all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf  # [relative_px, relative_py, vx, vy]
-        all_velocity_edges = np.ones((self.max_human_num, 2)) * np.inf  # [relative_px, relative_py, vx, vy]
+        # Initialize spatial, velocity, and direction consistency arrays
+        all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf  # [relative_px, relative_py]
+        all_velocity_edges = np.ones((self.max_human_num, 2)) * np.inf  # [relative_vx, relative_vy]
+        direction_consistency_edges = np.ones((self.max_human_num, 1)) * np.inf  # Direction consistency score
 
         # Collect positions, velocities, and IDs of visible humans for clustering
         visible_positions = []
@@ -384,31 +312,58 @@ class CrowdSimVarNum(CrowdSim):
 
         for i in range(self.human_num):
             if self.human_visibility[i]:
-                # Relative position to the robot
+                # Position relative to the robot
                 relative_pos = np.array([self.last_human_states[i, 0] - self.robot.px, 
                                         self.last_human_states[i, 1] - self.robot.py])
 
-                # Velocity of the human
-                velocity = np.array([self.last_human_states[i, 2], self.last_human_states[i, 3]])
+                # Calculate relative velocity (human velocity relative to robot velocity)
+                relative_velocity = np.array([self.last_human_states[i, 2] - self.robot.vx, 
+                                            self.last_human_states[i, 3] - self.robot.vy])
 
                 # Store spatial and velocity features
-                all_spatial_edges[self.humans[i].id, :2] = relative_pos
-                all_velocity_edges[self.humans[i].id, :2] = velocity
+                all_spatial_edges[self.humans[i].id, :] = relative_pos
+                all_velocity_edges[self.humans[i].id, :] = relative_velocity
 
-                visible_positions.append([self.last_human_states[i, 0], self.last_human_states[i, 1]])
-                visible_velocities.append([self.last_human_states[i, 2], self.last_human_states[i, 3]])
+                visible_positions.append(relative_pos)
+                visible_velocities.append(relative_velocity)
                 visible_human_ids.append(self.humans[i].id)  # Track human_id
 
-        # Cluster humans based on positions and velocities using DBSCAN
+        # Compute direction consistency using cosine similarity
+        def cosine_similarity(vec1, vec2):
+            norm_vec1 = np.linalg.norm(vec1)
+            norm_vec2 = np.linalg.norm(vec2)
+            
+            if norm_vec1 == 0 or norm_vec2 == 0:
+                # If either of the vectors has zero magnitude, return 0 (no similarity)
+                return 0
+            
+            # Compute cosine similarity
+            return np.dot(vec1, vec2) / (norm_vec1 * norm_vec2)
+
         if len(visible_positions) > 0:
             visible_positions = np.array(visible_positions)
             visible_velocities = np.array(visible_velocities)
 
-            # Combine positions and velocities for clustering
-            pos_vel_features = np.hstack((visible_positions, visible_velocities))
+            # Normalize spatial and velocity features (Z-Score)
+            spatial_mean = visible_positions.mean(axis=0)
+            spatial_std = visible_positions.std(axis=0) + 1e-6  # To avoid division by zero
+            velocity_mean = visible_velocities.mean(axis=0)
+            velocity_std = visible_velocities.std(axis=0) + 1e-6
 
-            # DBSCAN parameters: eps is the max distance between points in a cluster, min_samples is the min number of points to form a cluster
-            clustering = DBSCAN(eps=1.6, min_samples=2).fit(pos_vel_features)
+            norm_spatial = (visible_positions - spatial_mean) / spatial_std
+            norm_velocity = (visible_velocities - velocity_mean) / velocity_std
+
+            # Calculate direction consistency for each human
+            robot_velocity = np.array([self.robot.vx, self.robot.vy])
+            for idx, vel in enumerate(visible_velocities):
+                direction_consistency = cosine_similarity(robot_velocity, vel)
+                direction_consistency_edges[visible_human_ids[idx], 0] = direction_consistency
+
+            # Combine normalized spatial, velocity, and direction consistency features for clustering
+            combined_features = np.hstack([norm_spatial * spatial_weight, norm_velocity * velocity_weight, direction_consistency_edges[visible_human_ids] * directional_weight])
+
+            # Perform clustering using DBSCAN on the combined features
+            clustering = DBSCAN(eps=eps_value, min_samples=min_samples_value).fit(combined_features)
             cluster_labels = clustering.labels_  # Cluster labels for each human (noise is labeled -1)
 
             # Create a dictionary to track which human_ids belong to each group (cluster)
@@ -426,24 +381,26 @@ class CrowdSimVarNum(CrowdSim):
         else:
             ob['clusters'] = np.array([])  # No clusters if no humans are visible
             ob['group_members'] = {}  # No group members detected
+
         
-        print(f"Clusters:{ob['clusters']}\nHumanId: {ob['group_members']}")
-
+        print(f"Groups: {ob['group_members']}\n")
+       
+        # Store other observation data
         ob['visible_masks'] = np.zeros(self.max_human_num, dtype=bool)
+        ob['spatial_edges'] = all_spatial_edges
+        ob['velocity_edges'] = all_velocity_edges
+        ob['direction_consistency'] = direction_consistency_edges
 
-        # Sort all humans by distance (invisible humans will be in the end automatically)
+        # Sort humans by distance if needed
         if sort:
-            ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x[:2])))
-            # After sorting, the visible humans must be in the front
+            ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x)))
             if num_visibles > 0:
                 ob['visible_masks'][:num_visibles] = True
         else:
-            ob['spatial_edges'] = all_spatial_edges
             ob['visible_masks'][:self.human_num] = self.human_visibility
 
         ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
         ob['detected_human_num'] = num_visibles
-        # If no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
         if ob['detected_human_num'] == 0:
             ob['detected_human_num'] = 1
 
@@ -451,10 +408,32 @@ class CrowdSimVarNum(CrowdSim):
         self.observed_human_ids = np.where(self.human_visibility)[0]
 
         self.ob = ob
+        
+        # Identify detected groups and calculate their positions
+        detected_groups = self.ob.get('group_members', {})
+        
+        if detected_groups:
+            group_centroids = []  # To store group centroids
+            group_radii = []      # To store group safety radii
+
+            for group_id, human_ids in detected_groups.items():
+                group_positions = np.array([[self.last_human_states[i, 0], self.last_human_states[i, 1]] 
+                                            for i in human_ids])
+
+                # Calculate the centroid of the group
+                centroid = np.mean(group_positions, axis=0)
+                group_centroids.append(centroid)
+
+                # Calculate the group's bounding radius (or convex hull radius)
+                max_distance = np.max(np.linalg.norm(group_positions - centroid, axis=1))
+                group_radii.append(max_distance + 1.0)  # Add safety buffer
+
+            ob['group_centroids'] = group_centroids
+            ob['group_radii'] = group_radii
+             
+            self.ob = ob
 
         return ob
-
-    
 
     # Update the specified human's end goals in the environment randomly
     def update_human_pos_goal(self, human):
