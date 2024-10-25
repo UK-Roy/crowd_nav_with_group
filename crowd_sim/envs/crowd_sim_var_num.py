@@ -383,7 +383,7 @@ class CrowdSimVarNum(CrowdSim):
             ob['group_members'] = {}  # No group members detected
 
         
-        print(f"Groups: {ob['group_members']}\n")
+        # print(f"Groups: {ob['group_members']}\n")
        
         # Store other observation data
         ob['visible_masks'] = np.zeros(self.max_human_num, dtype=bool)

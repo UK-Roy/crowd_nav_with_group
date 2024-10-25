@@ -44,6 +44,8 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
     else:
         baseEnv = eval_envs.venv.unwrapped.envs[0].env
     time_limit = baseEnv.time_limit
+    time_step = baseEnv.time_step
+    # v_pref = baseEnv.robot.v_pref
 
     # start the testing episodes
     for k in range(test_size):
@@ -76,40 +78,59 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             
             # if grp_obs:
             #     # Identify detected groups and calculate their positions
-            #     detected_groups = self.ob.get('group_members', {})
-                
+            #     detected_groups = grp_obs.get('group_members', {})
+
             #     if detected_groups:
             #         group_centroids = grp_obs['group_centroids']
             #         group_radii = grp_obs['group_radii']
+
+            #         # Robot's current position and goal position
+            #         robot_position = torch.tensor([obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
+            #         goal_position = torch.tensor([obs['robot_node'][0, 0, 3], obs['robot_node'][0, 0, 4]], device=device)
+
+            #         # Calculate the intended position if the robot executes the action
+            #         intended_position = robot_position + action[0]
+            #         # intended_position = robot_position + action[0] * time_step * 2
                     
-            #         # Calculate the robot's initial intended position if it executes the action
-            #         intended_position = np.array([self.robot.px + action.vx * self.time_step, self.robot.py + action.vy * self.time_step])
-                
             #         # Now adjust the robot's velocity based on group avoidance
             #         for centroid, radius in zip(group_centroids, group_radii):
-            #             # Calculate the distance from the robot's intended position to the group's centroid
-            #             distance_to_group = np.linalg.norm(intended_position - centroid)
+            #             # Calculate the vector from the robot to the goal
+            #             robot_to_goal = goal_position - robot_position
+            #             robot_to_goal = robot_to_goal.type(torch.float64)
+            #             robot_to_group = centroid - robot_position
+                
+            #             # Check if the group is between the robot and the goal
+            #             # We do this by checking if the dot product of the direction to the goal and the direction to the group is positive (they are in the same direction)
+            #             if torch.dot(robot_to_goal, robot_to_group) > 0:
+            #                 # Calculate the distance from the group to the goal path
+            #                 distance_to_group = torch.norm(robot_to_group)
 
-            #             if distance_to_group < radius:
-            #                 # Group is too close, modify the robot's action to avoid the group
+            #                 # If the group is too close, adjust the robot's action to avoid it
+            #                 if distance_to_group < radius:
+            #                     # print(f"Distance:{distance_to_group} --Before: {action}")
+            #                     # Calculate vector away from the group
+            #                     avoid_vector = intended_position - centroid
+            #                     avoid_vector /= torch.norm(avoid_vector)  # Normalize the vector
 
-            #                 # Calculate vector away from the group
-            #                 avoid_vector = intended_position - centroid
-            #                 avoid_vector /= np.linalg.norm(avoid_vector)  # Normalize the vector
+            #                     # Adjust the robot's velocity to steer around the group
+            #                     avoidance_strength = torch.tensor(10.0, device=device)
+            #                     adjusted_velocity = action + avoid_vector * avoidance_strength
 
-            #                 # Adjust the robot's velocity vector to steer away from the group
-            #                 avoidance_strength = 1.5  # How strongly to avoid the group
-            #                 adjusted_velocity = np.array([action.vx, action.vy]) + avoid_vector * avoidance_strength
+            #                     # Blend the adjusted velocity with the original goal-directed velocity to ensure the robot still heads toward the goal
+            #                     blending_factor = 0.8  # You can adjust this value to control how much avoidance influences the action
+            #                     blended_velocity = blending_factor * adjusted_velocity + (1 - blending_factor) * action
 
-            #                 # Ensure the robot maintains a reasonable velocity (limit the magnitude of velocity)
-            #                 max_velocity = self.robot.v_pref
-            #                 if np.linalg.norm(adjusted_velocity) > max_velocity:
-            #                     adjusted_velocity = (adjusted_velocity / np.linalg.norm(adjusted_velocity)) * max_velocity
+            #                     # Ensure the robot maintains a reasonable velocity (limit the magnitude of velocity)
+            #                     # max_velocity = self.robot.v_pref
+            #                     # if torch.norm(blended_velocity) > max_velocity:
+            #                     #     blended_velocity = (blended_velocity / torch.norm(blended_velocity)) * max_velocity
 
-            #                 # Set the robot's new velocity
-            #                 action.vx, action.vy = adjusted_velocity[0], adjusted_velocity[1]
-                            
-            #                 break  # Only adjust for the nearest group
+            #                     # Set the robot's new velocity
+            #                     action = blended_velocity
+            #                     # print(f"After: {action}")
+
+            #                     break  # Only adjust for the nearest group
+
 
             # if the vec_pretext_normalize.py wrapper is used, send the predicted traj to env
             if args.env_name == 'CrowdSimPredRealGST-v0' and config.env.use_wrapper:
