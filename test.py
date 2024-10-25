@@ -101,6 +101,7 @@ def main():
 
 	torch.set_num_threads(1)
 	device = torch.device("cuda" if algo_args.cuda else "cpu")
+	# device = torch.device("cpu")
 
 	logging.info('Create other envs with new settings')
 
