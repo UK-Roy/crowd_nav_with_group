@@ -89,10 +89,6 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                     robot_position = torch.tensor([obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
                     goal_position = torch.tensor([obs['robot_node'][0, 0, 3], obs['robot_node'][0, 0, 4]], device=device)
 
-                    # Calculate the intended position if the robot executes the action
-                    # intended_position = robot_position + action[0]
-                    # intended_position = robot_position + action[0] * time_step * 2
-                    
                     # Now adjust the robot's velocity based on group avoidance
                     for centroid, radius in zip(group_centroids, group_radii):
                         # Calculate the vector from the robot to the goal
@@ -117,30 +113,6 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                                 angle = cal_vec(obs, action, centroid, device)
                                 if angle < 1.56:
                                     act = find_perpendi(robot_position, centroid, device)
-                                    print(act)
-                                # print(f"Distance:{distance_to_group} --Before: {action}")
-                                # Calculate vector away from the group
-                                # avoid_vector = intended_position - centroid
-                                # avoid_vector /= torch.norm(avoid_vector)  # Normalize the vector
-
-                                # # Adjust the robot's velocity to steer around the group
-                                # avoidance_strength = torch.tensor(10.0, device=device)
-                                # adjusted_velocity = action + avoid_vector * avoidance_strength
-
-                                # # Blend the adjusted velocity with the original goal-directed velocity to ensure the robot still heads toward the goal
-                                # blending_factor = 0.8  # You can adjust this value to control how much avoidance influences the action
-                                # blended_velocity = blending_factor * adjusted_velocity + (1 - blending_factor) * action
-
-
-                                # # Set the robot's new velocity
-                                # action = blended_velocity
-                                # # print(f"After: {action}")
-                                
-                                # angle = torch.atan2(action[0,1], action[0,0])
-                                # degrees = angle * 180 / torch.pi 
-                                # print(degrees)
-                                # action[0,0] = 0
-                                # action[0,1] = 0
                                 break  # Only adjust for the nearest group
 
 
@@ -240,8 +212,6 @@ def cal_vec(obs, action, centroid, device):
     intended_vector = intended_position - robot_position  # Vector from robot to intended position
     # intended_vector = intended_vector.type(torch.float64)
 
-    # Centroid distance vector (from robot to centroid of the detected group)
-    # centroid = torch.tensor([centroid[0], centroid[1]], device=device)  # Example: Group centroid coordinates
     centroid_vector = centroid - robot_position  # Vector from robot to group centroid
 
     # Calculate dot product between intended_vector and centroid_vector
@@ -257,7 +227,7 @@ def cal_vec(obs, action, centroid, device):
     # Calculate the angle in radians
     angle_radians = torch.acos(cos_theta)  # Returns angle in radians
 
-    # Optional: Convert the angle to degrees if needed
+    # Convert the angle to degrees if needed
     # angle_degrees = angle_radians * 180 / torch.pi
 
     # Print or return the angle
@@ -265,8 +235,6 @@ def cal_vec(obs, action, centroid, device):
     return angle_radians
 
 def find_perpendi(robot_position, centroid, device):
-    # Robot's current position
-    # robot_position = torch.tensor([obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
 
     # Centroid vector (from robot to group centroid)
     centroid_vector = centroid - robot_position
@@ -278,13 +246,6 @@ def find_perpendi(robot_position, centroid, device):
     # Normalize the perpendicular vector to get a direction vector
     perpendicular_direction = perpendicular_vector / torch.norm(perpendicular_vector)
 
-    # Set the distance you want to move in the perpendicular direction (you can adjust this value as needed)
-    # distance_from_robot = torch.tensor(1.0, device=device)  # Example distance to move along the perpendicular direction
-
-    # Calculate the intended position
-    # intended_position = robot_position + perpendicular_direction * distance_from_robot
-
-    # Print or return the intended position
-    print(f"Intended position (90 degrees to centroid vector): {perpendicular_direction}")
+    # print(f"Intended position (90 degrees to centroid vector): {perpendicular_direction}")
 
     return perpendicular_direction
