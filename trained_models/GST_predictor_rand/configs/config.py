@@ -68,7 +68,7 @@ class Config(object):
     humans.visible = True
     # orca or social_force for now
     # hybrid_orca_social_force
-    humans.policy = "hybrid_orca_social_force"
+    humans.policy = "orca"
     humans.radius = 0.3
     humans.v_pref = 1
     humans.sensor = "coordinates"
