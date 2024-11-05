@@ -123,7 +123,6 @@ def main():
 	load_path=os.path.join(test_args.model_dir,'checkpoints', test_args.test_model)
 	print(load_path)
 
-
 	# create an environment
 	env_name = algo_args.env_name
 

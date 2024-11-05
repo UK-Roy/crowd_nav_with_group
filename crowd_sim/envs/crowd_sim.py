@@ -40,6 +40,11 @@ class CrowdSim(gym.Env):
         self.collision_penalty = None
         self.discomfort_dist = None
         self.discomfort_penalty_factor = None
+
+        self.group_safety_buffer = None
+        self.discomfort_group_dist = None
+        self.grp_collision_penalty = None
+
         # simulation configuration
         self.config = None
         self.case_capacity = None
@@ -107,6 +112,11 @@ class CrowdSim(gym.Env):
         self.collision_penalty = config.reward.collision_penalty
         self.discomfort_dist = config.reward.discomfort_dist
         self.discomfort_penalty_factor = config.reward.discomfort_penalty_factor
+
+         
+        self.group_safety_buffer = config.reward.group_safety_buffer
+        self.discomfort_group_dist = config.reward.discomfort_group_dist
+        self.grp_collision_penalty = config.reward.grp_collision_penalty
 
 
         self.case_capacity = {'train': np.iinfo(np.uint32).max - 2000, 'val': 1000, 'test': 1000}

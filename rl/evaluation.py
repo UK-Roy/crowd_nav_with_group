@@ -25,15 +25,18 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
 
     success_times = []
     collision_times = []
+    grp_collision_times = []
     timeout_times = []
 
     success = 0
     collision = 0
+    grp_collision = 0
     timeout = 0
     too_close_ratios = []
     min_dist = []
 
     collision_cases = []
+    grp_collision_cases = []
     timeout_cases = []
 
     all_path_len = []
@@ -196,7 +199,12 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             collision += 1
             collision_cases.append(k)
             collision_times.append(global_time)
-            print('Collision')
+            print('Collision') 
+        elif isinstance(infos[0]['info'], Group_Collision):
+            grp_collision += 1
+            grp_collision_cases.append(k)
+            grp_collision_times.append(global_time)
+            print('Group Collision')
         elif isinstance(infos[0]['info'], Timeout):
             timeout += 1
             timeout_cases.append(k)
@@ -210,6 +218,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
     # all episodes end
     success_rate = success / test_size
     collision_rate = collision / test_size
+    grp_collision_rate = grp_collision / test_size
     timeout_rate = timeout / test_size
     assert success + collision + timeout == test_size
     avg_nav_time = sum(success_times) / len(
@@ -217,10 +226,10 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
 
     # logging
     logging.info(
-        'Testing success rate: {:.2f}, collision rate: {:.2f}, timeout rate: {:.2f}, '
+        'Testing success rate: {:.2f}, collision rate: {:.2f}, group collision rate: {:.2f}, timeout rate: {:.2f}, '
         'nav time: {:.2f}, path length: {:.2f}, average intrusion ratio: {:.2f}%, '
         'average minimal distance during intrusions: {:.2f}'.
-            format(success_rate, collision_rate, timeout_rate, avg_nav_time, np.mean(all_path_len),
+            format(success_rate, collision_rate, grp_collision_rate, timeout_rate, avg_nav_time, np.mean(all_path_len),
                    np.mean(too_close_ratios), np.mean(min_dist)))
 
     logging.info('Collision cases: ' + ' '.join([str(x) for x in collision_cases]))
@@ -229,6 +238,8 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
         len(eval_episode_rewards), np.mean(eval_episode_rewards)))
 
     eval_envs.close()
+
+
 
 def cal_vec(obs, action, centroid, device):
     # Robot's current position

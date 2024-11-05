@@ -27,8 +27,9 @@ class CrowdSimVarNum(CrowdSim):
         self.id_counter = None
         self.observed_human_ids = None
         self.pred_method = None
-
-
+        self.group_centroids = None
+        self.group_radii = None
+        
     def configure(self, config):
         """ read the config to the environment variables """
         super(CrowdSimVarNum, self).configure(config)
@@ -109,7 +110,6 @@ class CrowdSimVarNum(CrowdSim):
             # set human ids
             for i in range(self.human_num):
                 self.humans[i].id = i
-
 
 
     # generate a human that starts on a circle, and its goal is on the opposite side of the circle
@@ -229,57 +229,7 @@ class CrowdSimVarNum(CrowdSim):
 
         return self.human_future_traj
 
-
-    # reset = True: reset calls this function; reset = False: step calls this function
-    # sorted: sort all humans by distance to robot or not
-    # def generate_ob(self, reset, sort=False):
-    #     """Generate observation for reset and step functions"""
-    #     ob = {}
-
-    #     # nodes
-    #     visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
-
-    #     ob['robot_node'] = self.robot.get_full_state_list_noV()
-
-    #     prev_human_pos = copy.deepcopy(self.last_human_states)
-    #     self.update_last_human_states(self.human_visibility, reset=reset)
-
-    #     # edges
-    #     ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
-
-    #     # ([relative px, relative py, disp_x, disp_y], human id)
-    #     all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf
-
-    #     for i in range(self.human_num):
-    #         if self.human_visibility[i]:
-    #             # vector pointing from human i to robot
-    #             relative_pos = np.array(
-    #                 [self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
-    #             all_spatial_edges[self.humans[i].id, :2] = relative_pos
-
-    #     ob['visible_masks'] = np.zeros(self.max_human_num, dtype=bool)
-    #     # sort all humans by distance (invisible humans will be in the end automatically)
-    #     if sort:
-    #         ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x)))
-    #         # after sorting, the visible humans must be in the front
-    #         if num_visibles > 0:
-    #             ob['visible_masks'][:num_visibles] = True
-    #     else:
-    #         ob['spatial_edges'] = all_spatial_edges
-    #         ob['visible_masks'][:self.human_num] = self.human_visibility
-    #     ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
-    #     ob['detected_human_num'] = num_visibles
-    #     # if no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
-    #     if ob['detected_human_num'] == 0:
-    #         ob['detected_human_num'] = 1
-
-    #     # update self.observed_human_ids
-    #     self.observed_human_ids = np.where(self.human_visibility)[0]
-
-    #     self.ob = ob
-
-    #     return ob 
-    
+ 
     def generate_ob(self, reset, sort=False):
         """Generate observation with added direction consistency for group detection."""
         ob = {}
@@ -378,6 +328,7 @@ class CrowdSimVarNum(CrowdSim):
             # Add group/cluster information to the observation
             ob['clusters'] = cluster_labels  # Cluster labels for each human
             ob['group_members'] = cluster_dict  # Dictionary mapping group_id (cluster_label) to human_ids
+            print(f"Groups: {ob['group_members']}\n")
         else:
             ob['clusters'] = np.array([])  # No clusters if no humans are visible
             ob['group_members'] = {}  # No group members detected
@@ -413,8 +364,8 @@ class CrowdSimVarNum(CrowdSim):
         detected_groups = self.ob.get('group_members', {})
         
         if detected_groups:
-            group_centroids = []  # To store group centroids
-            group_radii = []      # To store group safety radii
+            self.group_centroids = []  # To store group centroids
+            self.group_radii = []      # To store group safety radii
 
             for group_id, human_ids in detected_groups.items():
                 group_positions = np.array([[self.last_human_states[i, 0], self.last_human_states[i, 1]] 
@@ -422,14 +373,14 @@ class CrowdSimVarNum(CrowdSim):
 
                 # Calculate the centroid of the group
                 centroid = np.mean(group_positions, axis=0)
-                group_centroids.append(centroid)
+                self.group_centroids.append(centroid)
 
                 # Calculate the group's bounding radius (or convex hull radius)
                 max_distance = np.max(np.linalg.norm(group_positions - centroid, axis=1))
-                group_radii.append(max_distance + 1.0)  # Add safety buffer
+                self.group_radii.append(max_distance + self.group_safety_buffer)  # Add safety buffer
 
-            ob['group_centroids'] = group_centroids
-            ob['group_radii'] = group_radii
+            ob['group_centroids'] = self.group_centroids
+            ob['group_radii'] = self.group_radii
              
             self.ob = ob
 
@@ -623,6 +574,7 @@ class CrowdSimVarNum(CrowdSim):
     def calc_reward(self, action, danger_zone='circle'):
         # collision detection
         dmin = float('inf')
+        dmingrp = float('inf')
 
         danger_dists = []
         collision = False
@@ -640,6 +592,25 @@ class CrowdSimVarNum(CrowdSim):
                 break
             elif closest_dist < dmin:
                 dmin = closest_dist
+        
+        danger_dists = []
+        grp_collision = False
+        
+        # collision check with groups
+        if self.group_centroids is not None:
+            for i, center in enumerate(self.group_centroids):
+                dx = center[0] - self.robot.px
+                dy = center[1] - self.robot.py
+                closest_dist = (dx ** 2 + dy ** 2) ** (1 / 2) - self.group_radii[i] - self.group_safety_buffer - self.robot.radius
+
+                if closest_dist < self.discomfort_group_dist:
+                    danger_dists.append(closest_dist)
+                if closest_dist < 0:
+                    grp_collision = True
+                    print(f"Group Id: {i}")
+                    break
+                elif closest_dist < dmingrp:
+                    dmingrp = closest_dist
 
 
         # check if reaching the goal
@@ -676,6 +647,10 @@ class CrowdSimVarNum(CrowdSim):
             reward = self.collision_penalty
             done = True
             episode_info = Collision()
+        elif grp_collision:
+            reward = self.grp_collision_penalty
+            done = True
+            episode_info = Group_Collision()
         elif reaching_goal:
             reward = self.success_reward
             done = True

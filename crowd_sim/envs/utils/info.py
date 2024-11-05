@@ -29,6 +29,14 @@ class Collision(object):
     def __str__(self):
         return 'Collision'
 
+
+class Group_Collision(object):
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        return 'Group Collision'
+
 class OutRoad(object):
     def __init__(self):
         pass
