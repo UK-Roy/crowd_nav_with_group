@@ -3,6 +3,9 @@ import numpy as np
 from numpy.linalg import norm
 import copy
 from sklearn.cluster import DBSCAN
+from scipy.sparse import csr_matrix
+import networkx as nx
+import matplotlib.pyplot as plt
 
 from crowd_sim.envs.utils.action import ActionRot, ActionXY
 from crowd_sim.envs import *
@@ -238,6 +241,7 @@ class CrowdSimVarNum(CrowdSim):
         spatial_weight = 0.8
         velocity_weight = 1
         directional_weight = 1
+        distance_weight = 1  # Weight for the pairwise distance feature
 
         # Nodes (robot and human states)
         visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
@@ -259,6 +263,8 @@ class CrowdSimVarNum(CrowdSim):
         visible_positions = []
         visible_velocities = []
         visible_human_ids = []
+        
+        cluster_dict = {}
 
         for i in range(self.human_num):
             if self.human_visibility[i]:
@@ -277,6 +283,14 @@ class CrowdSimVarNum(CrowdSim):
                 visible_positions.append(relative_pos)
                 visible_velocities.append(relative_velocity)
                 visible_human_ids.append(self.humans[i].id)  # Track human_id
+                
+                # For Ground Truth Grouping 
+                group_id = self.humans[i].group_id
+                if group_id is not None:
+                    cluster_label = group_id
+                    if cluster_label not in cluster_dict:
+                        cluster_dict[group_id] = []
+                    cluster_dict[group_id].append(self.humans[i].id) 
 
         # Compute direction consistency using cosine similarity
         def cosine_similarity(vec1, vec2):
@@ -294,41 +308,73 @@ class CrowdSimVarNum(CrowdSim):
             visible_positions = np.array(visible_positions)
             visible_velocities = np.array(visible_velocities)
 
+            
+            # My code for human Group Detection
+
             # Normalize spatial and velocity features (Z-Score)
-            spatial_mean = visible_positions.mean(axis=0)
-            spatial_std = visible_positions.std(axis=0) + 1e-6  # To avoid division by zero
-            velocity_mean = visible_velocities.mean(axis=0)
-            velocity_std = visible_velocities.std(axis=0) + 1e-6
+            # spatial_mean = visible_positions.mean(axis=0)
+            # spatial_std = visible_positions.std(axis=0) + 1e-6  # To avoid division by zero
+            # velocity_mean = visible_velocities.mean(axis=0)
+            # velocity_std = visible_velocities.std(axis=0) + 1e-6
 
-            norm_spatial = (visible_positions - spatial_mean) / spatial_std
-            norm_velocity = (visible_velocities - velocity_mean) / velocity_std
+            # norm_spatial = (visible_positions - spatial_mean) / spatial_std
+            # norm_velocity = (visible_velocities - velocity_mean) / velocity_std
 
-            # Calculate direction consistency for each human
-            robot_velocity = np.array([self.robot.vx, self.robot.vy])
-            for idx, vel in enumerate(visible_velocities):
-                direction_consistency = cosine_similarity(robot_velocity, vel)
-                direction_consistency_edges[visible_human_ids[idx], 0] = direction_consistency
+            # # Calculate direction consistency for each human
+            # robot_velocity = np.array([self.robot.vx, self.robot.vy])
+            # for idx, vel in enumerate(visible_velocities):
+            #     direction_consistency = cosine_similarity(robot_velocity, vel)
+            #     direction_consistency_edges[visible_human_ids[idx], 0] = direction_consistency
 
-            # Combine normalized spatial, velocity, and direction consistency features for clustering
-            combined_features = np.hstack([norm_spatial * spatial_weight, norm_velocity * velocity_weight, direction_consistency_edges[visible_human_ids] * directional_weight])
+            # # Calculate pairwise distances among visible humans
+            # visible_human_distances = np.zeros((len(visible_positions), len(visible_positions)))
+            # for i in range(len(visible_positions)):
+            #     for j in range(i + 1, len(visible_positions)):
+            #         # Calculate Euclidean distance between visible humans i and j
+            #         distance = np.linalg.norm(visible_positions[i] - visible_positions[j])
+            #         visible_human_distances[i, j] = distance
+            #         visible_human_distances[j, i] = distance
 
-            # Perform clustering using DBSCAN on the combined features
-            clustering = DBSCAN(eps=eps_value, min_samples=min_samples_value).fit(combined_features)
-            cluster_labels = clustering.labels_  # Cluster labels for each human (noise is labeled -1)
+            # # Add pairwise distances to the observation for use in clustering
+            # ob['visible_human_distances'] = visible_human_distances
 
-            # Create a dictionary to track which human_ids belong to each group (cluster)
-            cluster_dict = {}
-            for idx, cluster_label in enumerate(cluster_labels):
-                human_id = visible_human_ids[idx]
-                if cluster_label != -1:  # Ignore noise (-1)
-                    if cluster_label not in cluster_dict:
-                        cluster_dict[cluster_label] = []
-                    cluster_dict[cluster_label].append(human_id)
+            # # Normalize pairwise distances
+            # distance_mean = visible_human_distances.mean()
+            # distance_std = visible_human_distances.std() + 1e-6
+            # normalized_distances = (visible_human_distances - distance_mean) / distance_std
+            
+            # # Combine normalized spatial, velocity, and direction consistency features for clustering
+            # # combined_features = np.hstack([normalized_distances * distance_weight, norm_velocity * velocity_weight, \
+            # #     direction_consistency_edges[visible_human_ids] * directional_weight])
+            # combined_features = np.hstack([norm_spatial * spatial_weight, norm_velocity * velocity_weight, \
+            #     direction_consistency_edges[visible_human_ids] * directional_weight])
 
-            # Add group/cluster information to the observation
-            ob['clusters'] = cluster_labels  # Cluster labels for each human
-            ob['group_members'] = cluster_dict  # Dictionary mapping group_id (cluster_label) to human_ids
-            print(f"Groups: {ob['group_members']}\n")
+            # # Perform clustering using DBSCAN on the combined features
+            # # clu = self.cluster_by_distance(normalized_distances, 1.0, visualize=False)
+            # # print(f"Another Clustering: {clu}")
+            # clustering = DBSCAN(eps=eps_value, min_samples=min_samples_value).fit(combined_features)
+            # cluster_labels = clustering.labels_  # Cluster labels for each human (noise is labeled -1)
+
+            # # Create a dictionary to track which human_ids belong to each group (cluster)
+            # cluster_dict = {}
+            # for idx, cluster_label in enumerate(cluster_labels):
+            #     human_id = visible_human_ids[idx]
+            #     if cluster_label != -1:  # Ignore noise (-1)
+            #         if cluster_label not in cluster_dict:
+            #             cluster_dict[cluster_label] = []
+            #         cluster_dict[cluster_label].append(human_id)
+
+            # # Add group/cluster information to the observation
+            # ob['clusters'] = cluster_labels  # Cluster labels for each human
+            # ob['group_members'] = cluster_dict  # Dictionary mapping group_id (cluster_label) to human_ids
+            # print(f"Groups: {ob['group_members']}\n")
+            
+            # My code Ended
+            ob['group_members'] = cluster_dict           
+            ob['clusters'] = np.array([])  # No clusters if no humans are visible
+            
+            # print(cluster_dict)
+            
         else:
             ob['clusters'] = np.array([])  # No clusters if no humans are visible
             ob['group_members'] = {}  # No group members detected
@@ -568,6 +614,41 @@ class CrowdSimVarNum(CrowdSim):
 
         return ob, reward, done, info
 
+    
+
+    def cluster_by_distance(self, dist_matrix, d_threshold, visualize=False):
+        """
+        Clusters humans based on minimum distance using connected components.
+        :param dist_matrix: 2D numpy array of distances between humans.
+        :param d_threshold: Threshold distance for connecting humans.
+        :param visualize: Boolean to indicate whether to plot the graph.
+        :return: Dictionary mapping each cluster to list of human indices.
+        """
+        # Step 1: Create a binary adjacency matrix based on the threshold
+        adjacency_matrix = (dist_matrix < d_threshold).astype(int)
+        
+        # Step 2: Convert adjacency matrix to sparse matrix format
+        sparse_matrix = csr_matrix(adjacency_matrix)
+        
+        # Step 3: Create a graph from the sparse adjacency matrix
+        graph = nx.from_scipy_sparse_array(sparse_matrix)
+        
+        # Step 4: Find connected components in the graph
+        clusters = list(nx.connected_components(graph))
+        
+        # Step 5: Create a dictionary mapping clusters to human indices
+        cluster_dict = {i: list(cluster) for i, cluster in enumerate(clusters)}
+        
+        # Visualization
+        if visualize:
+            plt.figure(figsize=(8, 6))
+            pos = nx.spring_layout(graph)  # Position nodes using spring layout for better visualization
+            nx.draw(graph, pos, with_labels=True, node_size=500, node_color='skyblue', font_size=12, font_weight='bold', edge_color='gray')
+            plt.title("Graph Representation of Clusters Based on Minimum Distance")
+            plt.show()
+        
+        return cluster_dict
+    
     # find R(s, a)
     # danger_zone: how to define the personal_zone (if the robot intrudes into this zone, the info will be Danger)
     # circle (traditional) or future (based on true future traj of humans)
@@ -601,13 +682,14 @@ class CrowdSimVarNum(CrowdSim):
             for i, center in enumerate(self.group_centroids):
                 dx = center[0] - self.robot.px
                 dy = center[1] - self.robot.py
-                closest_dist = (dx ** 2 + dy ** 2) ** (1 / 2) - self.group_radii[i] - self.group_safety_buffer - self.robot.radius
+                # closest_dist = (dx ** 2 + dy ** 2) ** (1 / 2) - self.group_radii[i] - self.group_safety_buffer - self.robot.radius
+                closest_dist = (dx ** 2 + dy ** 2) ** (1 / 2) - self.group_radii[i] - 0.05
 
                 if closest_dist < self.discomfort_group_dist:
                     danger_dists.append(closest_dist)
                 if closest_dist < 0:
                     grp_collision = True
-                    print(f"Group Id: {i}")
+                    # print(f"Group Id: {i}")
                     break
                 elif closest_dist < dmingrp:
                     dmingrp = closest_dist
@@ -650,7 +732,7 @@ class CrowdSimVarNum(CrowdSim):
         elif grp_collision:
             reward = self.grp_collision_penalty
             done = True
-            episode_info = Group_Collision()
+            episode_info = GroupCollision()
         elif reaching_goal:
             reward = self.success_reward
             done = True

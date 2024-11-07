@@ -155,7 +155,7 @@ def main():
 	test_size = config.env.test_size
 
 	# call the evaluation function
-	evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args, test_args.visualize)
+	evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args, test_args.visualize, group_avoid_action=False)
 
 
 if __name__ == '__main__':

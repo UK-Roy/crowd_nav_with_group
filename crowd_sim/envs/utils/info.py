@@ -30,7 +30,7 @@ class Collision(object):
         return 'Collision'
 
 
-class Group_Collision(object):
+class GroupCollision(object):
     def __init__(self):
         pass
 

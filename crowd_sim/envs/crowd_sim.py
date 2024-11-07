@@ -15,7 +15,6 @@ from crowd_sim.envs.utils.action import ActionRot, ActionXY
 from crowd_sim.envs.utils.recorder import Recoder
 
 
-
 class CrowdSim(gym.Env):
     """
     A base environment
@@ -1002,4 +1001,3 @@ class CrowdSim(gym.Env):
             # initially use add_artist and draw_artist later on
         for t in ax.texts:
             t.set_visible(False)
-

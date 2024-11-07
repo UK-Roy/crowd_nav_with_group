@@ -4,7 +4,7 @@ import torch
 from crowd_sim.envs.utils.info import *
 
 
-def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging, config, args, visualize=False):
+def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging, config, args, visualize=False, group_avoid_action=False):
     """ function to run all testing episodes and log the testing metrics """
     # initializations
     eval_episode_rewards = []
@@ -82,67 +82,68 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                 action = torch.zeros([1, 2], device=device)
             if not done:
                 global_time = baseEnv.global_time
-            
-            # if grp_obs:
-            #     # Identify detected groups and calculate their positions
-            #     detected_groups = grp_obs.get('group_members', {})
+           
+            if group_avoid_action: 
+                if grp_obs:
+                    # Identify detected groups and calculate their positions
+                    detected_groups = grp_obs.get('group_members', {})
 
-            #     if detected_groups:
-            #         group_centroids = grp_obs['group_centroids']
-            #         group_radii = grp_obs['group_radii']
+                    if detected_groups:
+                        group_centroids = grp_obs['group_centroids']
+                        group_radii = grp_obs['group_radii']
 
-            #         # Robot's current position and goal position
-            #         robot_position = torch.tensor([obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
-            #         goal_position = torch.tensor([obs['robot_node'][0, 0, 3], obs['robot_node'][0, 0, 4]], device=device)
+                        # Robot's current position and goal position
+                        robot_position = torch.tensor([obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
+                        goal_position = torch.tensor([obs['robot_node'][0, 0, 3], obs['robot_node'][0, 0, 4]], device=device)
 
-            #         goal_threshold = 3  # Distance where the robot prioritizes goal over group avoidance
-            #         safe_margin = 0.1  # Safety margin around groups
+                        goal_threshold = 3  # Distance where the robot prioritizes goal over group avoidance
+                        safe_margin = 0.25  # Safety margin around groups
 
-            #         # Now adjust the robot's velocity based on group avoidance
-            #         for centroid, radius in zip(group_centroids, group_radii):
-            #             # Calculate the vector from the robot to the goal
-            #             robot_to_goal = goal_position - robot_position
-            #             distance_robot_to_goal = torch.norm(robot_to_goal)
-            #             distance_centroid_to_goal = torch.norm(centroid - goal_position)
+                        # Now adjust the robot's velocity based on group avoidance
+                        for centroid, radius in zip(group_centroids, group_radii):
+                            # Calculate the vector from the robot to the goal
+                            robot_to_goal = goal_position - robot_position
+                            distance_robot_to_goal = torch.norm(robot_to_goal)
+                            distance_centroid_to_goal = torch.norm(centroid - goal_position)
 
-            #             robot_to_goal = robot_to_goal.type(torch.float64)
-            #             robot_to_group = centroid - robot_position
-                       
-            #             if distance_robot_to_goal < distance_centroid_to_goal and distance_robot_to_goal < goal_threshold:
-            #                 break  # Stop avoiding the group, focus on the goal
+                            robot_to_goal = robot_to_goal.type(torch.float64)
+                            robot_to_group = centroid - robot_position
+                        
+                            if distance_robot_to_goal < distance_centroid_to_goal and distance_robot_to_goal < goal_threshold:
+                                break  # Stop avoiding the group, focus on the goal
 
-            #             # Check if the group is between the robot and the goal
-            #             if torch.dot(robot_to_goal, robot_to_group) > 0:
-            #                 # Calculate the distance from the group to the goal path
-            #                 distance_to_group = torch.norm(robot_to_group)
+                            # Check if the group is between the robot and the goal
+                            if torch.dot(robot_to_goal, robot_to_group) > 0:
+                                # Calculate the distance from the group to the goal path
+                                distance_to_group = torch.norm(robot_to_group)
 
-            #                 # If the group is too close, adjust the robot's action to avoid it
-            #                 if distance_to_group < radius + safe_margin:
+                                # If the group is too close, adjust the robot's action to avoid it
+                                if distance_to_group < radius + safe_margin:
 
-            #                     # Prioritize the goal if the robot is closer to the goal than the group centroid
-            #                     if distance_robot_to_goal < distance_centroid_to_goal: 
-            #                         break  # Focus on goal
-                                
-            #                     # Adjust action based on the group location
-            #                     # angle = cal_vec(obs, action, centroid, device)
-            #                     # if angle < 1.56:  # Check if the group is in front of the robot
-            #                     #     act = find_perpendi(robot_position, centroid, device)
-            #                         # print(angle)
-            #                     # Adjust action based on the group location
-            #                     clockwise_perpendicular = find_perpendi(robot_position, centroid, device, clockwise=True)
-            #                     anticlockwise_perpendicular = find_perpendi(robot_position, centroid, device, clockwise=False)
-                                
-            #                     # Calculate the angles for both directions
-            #                     rad, clockwise_angle_deg = angle_between_vectors(clockwise_perpendicular, robot_to_goal)
-            #                     anticlockwise_angle_deg = 180 - clockwise_angle_deg
-            #                     # Choose the best avoidance direction based on the smaller angle
-            #                     if clockwise_angle_deg < anticlockwise_angle_deg:
-            #                         act = clockwise_perpendicular
-            #                     else:
-            #                         act = anticlockwise_perpendicular
-                                
-                                
-            #                     break  # Only adjust for the nearest group
+                                    # Prioritize the goal if the robot is closer to the goal than the group centroid
+                                    if distance_robot_to_goal < distance_centroid_to_goal: 
+                                        break  # Focus on goal
+                                    
+                                    # Adjust action based on the group location
+                                    # angle = cal_vec(obs, action, centroid, device)
+                                    # if angle < 1.56:  # Check if the group is in front of the robot
+                                    #     act = find_perpendi(robot_position, centroid, device)
+                                        # print(angle)
+                                    # Adjust action based on the group location
+                                    clockwise_perpendicular = find_perpendi(robot_position, centroid, device, clockwise=True)
+                                    anticlockwise_perpendicular = find_perpendi(robot_position, centroid, device, clockwise=False)
+                                    
+                                    # Calculate the angles for both directions
+                                    rad, clockwise_angle_deg = angle_between_vectors(clockwise_perpendicular, robot_to_goal)
+                                    anticlockwise_angle_deg = 180 - clockwise_angle_deg
+                                    # Choose the best avoidance direction based on the smaller angle
+                                    if clockwise_angle_deg < anticlockwise_angle_deg:
+                                        act = clockwise_perpendicular
+                                    else:
+                                        act = anticlockwise_perpendicular
+                                    
+                                    
+                                    break  # Only adjust for the nearest group
 
 
             # if the vec_pretext_normalize.py wrapper is used, send the predicted traj to env
@@ -200,7 +201,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             collision_cases.append(k)
             collision_times.append(global_time)
             print('Collision') 
-        elif isinstance(infos[0]['info'], Group_Collision):
+        elif isinstance(infos[0]['info'], GroupCollision):
             grp_collision += 1
             grp_collision_cases.append(k)
             grp_collision_times.append(global_time)
