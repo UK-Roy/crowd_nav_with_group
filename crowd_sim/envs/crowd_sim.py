@@ -8,6 +8,7 @@ import copy
 from numpy.linalg import norm
 from crowd_sim.envs.utils.human import Human
 from crowd_sim.envs.utils.robot import Robot
+from crowd_sim.envs.utils.group import Group
 from crowd_sim.envs.utils.info import *
 from crowd_nav.policy.orca import ORCA
 from crowd_sim.envs.utils.state import *
@@ -59,6 +60,8 @@ class CrowdSim(gym.Env):
         self.observation_space=None
 
         # Group Dynamics
+        self.grp = []
+
         self.group_counter = 0
         self.num_groups = 3
         self.group_size = 3
@@ -66,6 +69,9 @@ class CrowdSim(gym.Env):
         self.group_circle_radius = 10
         self.leader = {}
         self.leader_act = {}
+
+        for i in range(self.num_groups):
+            self.grp.append(Group(i, self.group_size))
 
         # limit FOV
         self.robot_fov = None
@@ -351,6 +357,18 @@ class CrowdSim(gym.Env):
                 return self.group_counter
         else:
             return None  # No group
+    
+    def get_group_id(self, id):
+        """
+        Finds and returns the ID of a group with available capacity.
+        Returns None if no valid group is found.
+        """
+        for grp in self.grp:
+            if grp.check_validity():  # Checks if the group has space for more members
+                grp.add_member(id)
+                return grp.id
+        return None
+
 
     # update the robot belief of human states
     # if a human is visible, its state is updated to its current ground truth state

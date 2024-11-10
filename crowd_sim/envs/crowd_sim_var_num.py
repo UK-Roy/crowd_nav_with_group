@@ -11,6 +11,7 @@ from crowd_sim.envs.utils.action import ActionRot, ActionXY
 from crowd_sim.envs import *
 from crowd_sim.envs.utils.info import *
 from crowd_sim.envs.utils.human import Human
+from crowd_sim.envs.utils.group import Group
 from crowd_sim.envs.utils.state import JointState
 
 
@@ -110,15 +111,18 @@ class CrowdSimVarNum(CrowdSim):
 
             self.generate_random_human_position(human_num=self.human_num)
             self.last_human_states = np.zeros((self.human_num, 5))
+
             # set human ids
-            for i in range(self.human_num):
-                self.humans[i].id = i
+            # for i in range(self.human_num):
+            #     self.humans[i].id = i
 
 
     # generate a human that starts on a circle, and its goal is on the opposite side of the circle
     def generate_circle_crossing_human(self, current_human_num):
         human = Human(self.config, 'humans')
-        human.set_group(self.assign_groups(current_human_num))
+        human.id = current_human_num
+        # human.set_group(self.assign_groups(current_human_num))
+        human.set_group(self.get_group_id(current_human_num))
 
         if self.randomize_attributes:
             human.sample_random_attributes()
@@ -472,11 +476,13 @@ class CrowdSimVarNum(CrowdSim):
         self.step_counter = 0
         self.id_counter = 0
 
-
         self.humans = []
         self.group_counter = 0
         self.leader = {}
         self.leader_act = {}
+        self.grp = []
+        for i in range(self.num_groups):
+            self.grp.append(Group(i, self.group_size))
         # self.human_num = self.config.sim.human_num
         # initialize a list to store observed humans' IDs
         self.observed_human_ids = []
