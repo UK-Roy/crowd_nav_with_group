@@ -254,7 +254,8 @@ class CrowdSim(gym.Env):
                     if human.group_id == grp.id:
                         if grp.centroid is None:
                         # If no base exists, generate a new base for this group
-                            base_x, base_y = np.random.uniform(-self.group_circle_radius, self.group_circle_radius, 2)
+                            base_x, base_y = np.random.uniform(-self.arena_size, self.arena_size, 2)
+                            # base_x, base_y = np.random.uniform(-self.group_circle_radius, self.group_circle_radius, 2)
                             self.grp[human.group_id].set_centroid(base_x, base_y)
                         else:
                             # If a base already exists, use it
