@@ -35,6 +35,12 @@ class Group:
     def check_validity(self):
         return len(self.members) < self.max_member
     
+
+    def get_centroid(self):
+        if self.centroid:
+            return self.centroid[0], self.centroid[1]
+        return None
+
     def get_group(self):
         return {
             "id": self.id,

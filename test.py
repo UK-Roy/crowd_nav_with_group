@@ -3,6 +3,7 @@ import argparse
 import os
 import sys
 from matplotlib import pyplot as plt
+import numpy
 import torch
 import torch.nn as nn
 
@@ -85,6 +86,8 @@ def main():
 
 	logging.info('robot FOV %f', config.robot.FOV)
 	logging.info('humans FOV %f', config.humans.FOV)
+
+	numpy.random.rand(algo_args.seed)
 
 	torch.manual_seed(algo_args.seed)
 	torch.cuda.manual_seed_all(algo_args.seed)

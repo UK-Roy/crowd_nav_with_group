@@ -65,7 +65,6 @@ class CrowdSim(gym.Env):
         self.group_counter = 0
         self.num_groups = 3
         self.group_size = 3
-        self.group_base_positions = {}  # Store base positions for groups
         self.group_circle_radius = 10
         self.leader = {}
         self.leader_act = {}
@@ -209,6 +208,16 @@ class CrowdSim(gym.Env):
 
     def set_robot(self, robot):
         raise NotImplementedError
+    
+    def initialize_human(self, current_human_num): 
+        human = Human(self.config, 'humans')
+        human.id = current_human_num
+        # human.set_group(self.assign_groups(current_human_num))
+        human.set_group(self.get_group_id(current_human_num))
+
+        if self.randomize_attributes:
+            human.sample_random_attributes() 
+        return human
 
 
     def generate_random_human_position(self, human_num):
@@ -231,22 +240,25 @@ class CrowdSim(gym.Env):
             # base_x = goal_x + px_noise
             # base_y = goal_y + py_noise
 
-            self.group_base_positions[group_near_goal] = (base_x, base_y)
+            self.grp[group_near_goal].set_centroid(base_x, base_y)
 
         
         # Generate humans with group behavior and randomness for individuals
         for i in range(human_num):
-            human = self.generate_circle_crossing_human(i)
-
+            
+            human = self.initialize_human(i)
+            
             if human.group_id is not None:
                 # Check if the group already has a base position
-                if human.group_id not in self.group_base_positions:
-                    # If no base exists, generate a new base for this group
-                    base_x, base_y = np.random.uniform(-self.group_circle_radius, self.group_circle_radius, 2)
-                    self.group_base_positions[human.group_id] = (base_x, base_y)
-                else:
-                    # If a base already exists, use it
-                    base_x, base_y = self.group_base_positions[human.group_id]
+                for grp in self.grp:
+                    if human.group_id == grp.id:
+                        if grp.centroid is None:
+                        # If no base exists, generate a new base for this group
+                            base_x, base_y = np.random.uniform(-self.group_circle_radius, self.group_circle_radius, 2)
+                            self.grp[human.group_id].set_centroid(base_x, base_y)
+                        else:
+                            # If a base already exists, use it
+                            base_x, base_y = self.grp[human.group_id].get_centroid()
                 
                 # Position other groups randomly but with members close to each other
                 self.position_group_randomly(human, base_x, base_y)
@@ -254,6 +266,8 @@ class CrowdSim(gym.Env):
                     human.isObstacle = True
 
             else:
+                
+                human = self.generate_circle_crossing_human(human)
                 # Random positioning for individuals
                 self.humans.append(human)
         
@@ -261,7 +275,7 @@ class CrowdSim(gym.Env):
         # for i in range(human_num):
         #     self.humans.append(self.generate_circle_crossing_human(i))
     
-    # 4. Helper function to position other group members close together, but scattered
+    # Helper function to position other group members close together, but scattered
     def position_group_randomly(self, human, base_x, base_y):
         """
         Position group members randomly within the environment but keep them close to each other.
@@ -311,10 +325,7 @@ class CrowdSim(gym.Env):
 
     def generate_circle_crossing_human(self, current_human_num):
         """Generate a human: generate start position on a circle, goal position is at the opposite side"""
-        human = Human(self.config, 'humans')
-
-        if self.randomize_attributes:
-            human.sample_random_attributes()
+        human = self.initialize_human(current_human_num=current_human_num)
 
         while True:
             angle = np.random.random() * np.pi * 2

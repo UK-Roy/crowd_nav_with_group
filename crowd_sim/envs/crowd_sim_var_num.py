@@ -118,14 +118,7 @@ class CrowdSimVarNum(CrowdSim):
 
 
     # generate a human that starts on a circle, and its goal is on the opposite side of the circle
-    def generate_circle_crossing_human(self, current_human_num):
-        human = Human(self.config, 'humans')
-        human.id = current_human_num
-        # human.set_group(self.assign_groups(current_human_num))
-        human.set_group(self.get_group_id(current_human_num))
-
-        if self.randomize_attributes:
-            human.sample_random_attributes()
+    def generate_circle_crossing_human(self, human):
 
         while True:
             angle = np.random.random() * np.pi * 2
@@ -269,6 +262,13 @@ class CrowdSimVarNum(CrowdSim):
         visible_human_ids = []
         
         cluster_dict = {}
+        # for i in range(self.human_num):
+        #     group_id = self.humans[i].group_id
+        #     if group_id is not None:
+        #         cluster_label = group_id
+        #         if cluster_label not in cluster_dict:
+        #             cluster_dict[group_id] = []
+        #         cluster_dict[group_id].append(self.humans[i].id)
 
         for i in range(self.human_num):
             if self.human_visibility[i]:
@@ -295,6 +295,8 @@ class CrowdSimVarNum(CrowdSim):
                     if cluster_label not in cluster_dict:
                         cluster_dict[group_id] = []
                     cluster_dict[group_id].append(self.humans[i].id) 
+        
+        # print(cluster_dict)
 
         # Compute direction consistency using cosine similarity
         def cosine_similarity(vec1, vec2):
@@ -574,7 +576,7 @@ class CrowdSimVarNum(CrowdSim):
                     # print('max_remove_num, invisible', max_remove_num)
                 else:
                     max_remove_num = min(self.human_num - self.min_human_num, (self.human_num - 1) - max(self.observed_human_ids))
-                    # print('max_remove_num, visible', max_remove_num)
+                    # print('max_remove_num, viscluster_dictible', max_remove_num)
                 remove_num = np.random.randint(low=0, high=max_remove_num + 1)
                 for _ in range(remove_num):
                     self.humans.pop()
@@ -613,8 +615,7 @@ class CrowdSimVarNum(CrowdSim):
             for i, human in enumerate(self.humans):
                 if norm((human.gx - human.px, human.gy - human.py)) < human.radius:
                     if self.robot.kinematics == 'holonomic':
-                        self.humans[i] = self.generate_circle_crossing_human(i)
-                        self.humans[i].id = i
+                        self.humans[i] = self.generate_circle_crossing_human(self.initialize_human(i))
                     else:
                         self.update_human_goal(human)
 

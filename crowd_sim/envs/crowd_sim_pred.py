@@ -206,8 +206,7 @@ class CrowdSimPred(CrowdSimVarNum):
         if self.end_goal_changing and not self.record:
             for i, human in enumerate(self.humans):
                 if norm((human.gx - human.px, human.gy - human.py)) < human.radius:
-                    self.humans[i] = self.generate_circle_crossing_human(i)
-                    self.humans[i].id = i
+                    self.humans[i] = self.generate_circle_crossing_human(self.initialize_human(i))
 
         return ob, reward, done, info
 
