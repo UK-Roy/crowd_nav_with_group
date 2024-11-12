@@ -62,16 +62,14 @@ class CrowdSim(gym.Env):
         # Group Dynamics
         self.grp = []
 
-        self.group_counter = 0
-        self.num_groups = 3
-        self.group_size = 3
-        self.group_circle_radius = 10
+        self.num_groups = None 
+        self.min_size = None
+        self.max_size = None
+        self.group_min_radius = None
+        self.group_max_radius = None
         self.leader = {}
         self.leader_act = {}
-
-        for i in range(self.num_groups):
-            self.grp.append(Group(i, self.group_size))
-
+        
         # limit FOV
         self.robot_fov = None
         self.human_fov = None
@@ -122,6 +120,17 @@ class CrowdSim(gym.Env):
         self.discomfort_group_dist = config.reward.discomfort_group_dist
         self.grp_collision_penalty = config.reward.grp_collision_penalty
 
+        # Group Configuration
+        self.num_groups = config.group.num_groups 
+        self.min_size = config.group.min_size
+        self.max_size = config.group.max_size
+        for i in range(self.num_groups):
+            self.grp.append(Group(i, self.min_size, self.max_size))
+        
+        self.min_group_distance = config.group.min_distance
+
+        self.group_min_radius = config.group.min_radius 
+        self.group_max_radius = config.group.max_radius
 
         self.case_capacity = {'train': np.iinfo(np.uint32).max - 2000, 'val': 1000, 'test': 1000}
         self.case_size = {'train': np.iinfo(np.uint32).max - 2000, 'val': self.config.env.val_size,
@@ -212,8 +221,7 @@ class CrowdSim(gym.Env):
     def initialize_human(self, current_human_num): 
         human = Human(self.config, 'humans')
         human.id = current_human_num
-        # human.set_group(self.assign_groups(current_human_num))
-        human.set_group(self.get_group_id(current_human_num))
+        human.set_group(self.get_group_id(human))
 
         if self.randomize_attributes:
             human.sample_random_attributes() 
@@ -226,23 +234,10 @@ class CrowdSim(gym.Env):
         :param human_num: the total number of humans to be generated
         :return: None
         """
-        # Determine which group will be positioned near the goal
+     
         if self.num_groups > 0:
-            group_near_goal = np.random.randint(self.num_groups)
-
-            fraction = 0.8
-            base_x = self.robot.px + fraction * (self.robot.gx - self.robot.px)
-            base_y = self.robot.py + fraction * (self.robot.gy - self.robot.py)
+            self.assign_group_centroids()
             
-            # noise_range = 3
-            # px_noise = np.random.uniform(0, 1) * noise_range
-            # py_noise = np.random.uniform(0, 1) * noise_range
-            # base_x = goal_x + px_noise
-            # base_y = goal_y + py_noise
-
-            self.grp[group_near_goal].set_centroid(base_x, base_y)
-
-        
         # Generate humans with group behavior and randomness for individuals
         for i in range(human_num):
             
@@ -250,21 +245,12 @@ class CrowdSim(gym.Env):
             
             if human.group_id is not None:
                 # Check if the group already has a base position
-                for grp in self.grp:
-                    if human.group_id == grp.id:
-                        if grp.centroid is None:
-                        # If no base exists, generate a new base for this group
-                            base_x, base_y = np.random.uniform(-self.arena_size, self.arena_size, 2)
-                            # base_x, base_y = np.random.uniform(-self.group_circle_radius, self.group_circle_radius, 2)
-                            self.grp[human.group_id].set_centroid(base_x, base_y)
-                        else:
-                            # If a base already exists, use it
-                            base_x, base_y = self.grp[human.group_id].get_centroid()
-                
-                # Position other groups randomly but with members close to each other
-                self.position_group_randomly(human, base_x, base_y)
-                if human.group_id == group_near_goal:
-                    human.isObstacle = True
+                grp = self.grp[human.group_id]
+                if not grp.check_validity():
+                    radii = np.random.uniform(self.group_min_radius, self.group_max_radius)
+                    self.grp[human.group_id].set_radius(radii)
+                    self.humans = self.grp[human.group_id].position_members(self.robot, self.humans)
+                human.isObstacle = True
 
             else:
                 
@@ -276,52 +262,47 @@ class CrowdSim(gym.Env):
         # for i in range(human_num):
         #     self.humans.append(self.generate_circle_crossing_human(i))
     
-    # Helper function to position other group members close together, but scattered
-    def position_group_randomly(self, human, base_x, base_y):
+    def assign_group_centroids(self):
         """
-        Position group members randomly within the environment but keep them close to each other.
-        Members of the same group will have the same base position.
+        Assign centroids to each group in the GroupList, positioning one group near the goal,
+        and the rest in non-overlapping random locations within the environment.
         """
-        while True:
-            angle = np.random.random() * np.pi * 2
-            # add some noise to simulate all the possible cases robot could meet with human
-            noise_range = 2
-            distance_from_base = np.random.uniform(0, 1) * noise_range
-            px = base_x + distance_from_base * np.cos(angle)
-            py = base_y + distance_from_base * np.sin(angle)
-       
-            collide = False
-            agent_group = [h for h in self.humans if h.group_id == human.group_id]
-            for i, agent in enumerate([self.robot] + agent_group):
-                
-                min_dist = human.radius + agent.radius + 0.1
-                if norm((px - agent.px, py - agent.py)) < min_dist or \
-                        norm((px - agent.gx, py - agent.gy)) < min_dist:
-                    collide = True
-                    break
-            if not collide:
-                break
+        all_centroids = []  # Keep track of centroids to avoid overlap
+        min_distance = self.min_group_distance  # Minimum distance between group centroids to prevent collisions
 
-        # Set the human's position and add to the humans list
-        human.set(px, py, -px, -py, 0, 0, human.radius)
-        self.humans.append(human)
+        group_near_goal = 0
+
+        # Iterate through each group in the group list
+        for i, group in enumerate(self.grp):
+            if i == group_near_goal:
+                # Place this group near the goal position
+                fraction = 0.8  # Distance factor from robot to goal
+                base_x = self.robot.px + fraction * (self.robot.gx - self.robot.px)
+                base_y = self.robot.py + fraction * (self.robot.gy - self.robot.py)
+                group.set_centroid(base_x, base_y)
+            else:
+                # Set a non-overlapping centroid for this group
+                group.set_centroid(*self.generate_non_overlapping_centroid(all_centroids, min_distance))
+            
+            # Add the assigned centroid to the list to ensure future centroids don’t overlap
+            all_centroids.append(group.centroid)
+
     
-    # 5. Helper function to position a group near the goal
-    # def position_group_near_goal(self, human, goal_x, goal_y):
-    #     """
-    #     This function places group members close to each other near the robot's goal position.
-    #     """
-    #     angle = np.random.uniform(0, np.pi * 2) / 10  # Small deviation around the goal
-    #     distance_from_goal = np.random.uniform(0.5, 1.5)  # Close to the goal
-    #     px = goal_x + distance_from_goal * np.cos(angle)
-    #     py = goal_y + distance_from_goal * np.sin(angle)
-
-    #     # Ensure the group is between the robot and goal
-    #     if np.linalg.norm([px - self.robot.px, py - self.robot.py]) > np.linalg.norm([goal_x - self.robot.px, goal_y - self.robot.py]):
-    #         px, py = self.robot.px, self.robot.py  # Reposition to ensure it's between robot and goal
-
-    #     human.set(px, py, goal_x, goal_y, 0, 0, human.radius)
-    #     self.humans.append(human)
+    def generate_non_overlapping_centroid(self, existing_centroids, min_distance=2.0):
+        """
+        Generate a non-overlapping centroid position within the arena for a group.
+        :param existing_centroids: List of existing centroids to check for overlap.
+        :param min_distance: Minimum distance between centroids.
+        :return: A tuple (px, py) representing the centroid.
+        """
+        max_attempts = 100  # Limit attempts to find a position to avoid infinite loops
+        for _ in range(max_attempts):
+            px, py = np.random.uniform(-self.arena_size, self.arena_size, 2)
+            # Check if the new centroid position is at least min_distance away from existing centroids
+            if all(np.linalg.norm(np.array([px, py]) - np.array(other_centroid)) >= min_distance 
+                for other_centroid in existing_centroids):
+                return px, py
+        raise ValueError("Unable to find a non-overlapping position after maximum attempts")
 
 
     def generate_circle_crossing_human(self, current_human_num):
@@ -356,28 +337,15 @@ class CrowdSim(gym.Env):
         # human.set(px, py, px, py, 0, 0, 0)
         human.set(px, py, -px, -py, 0, 0, 0)
         return human
-
-    # Assign for creating groups
-    def assign_groups(self, i):
-        if self.group_counter < self.num_groups:
-                if i < self.group_size * (self.group_counter + 1):
-                    pass
-                else:
-                    self.group_counter += 1
-                    if self.group_counter == self.num_groups:
-                        return None
-                return self.group_counter
-        else:
-            return None  # No group
     
-    def get_group_id(self, id):
+    def get_group_id(self, human):
         """
         Finds and returns the ID of a group with available capacity.
         Returns None if no valid group is found.
         """
         for grp in self.grp:
             if grp.check_validity():  # Checks if the group has space for more members
-                grp.add_member(id)
+                grp.add_member(human)
                 return grp.id
         return None
 

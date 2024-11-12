@@ -1,13 +1,13 @@
 import numpy as np
 
 class Group:
-    def __init__(self, id, max_mem):
+    def __init__(self, id, min_mem, max_mem):
         self.id = id
         self.members = []
         self.leader = None
         self.centroid = None
         self.radius = None
-        self.max_member = np.random.randint(2, max_mem+1)
+        self.max_member = np.random.randint(min_mem, max_mem+1)
     
     def config_group(self):
         self.leader = self.members[0] if self.members else None
@@ -18,11 +18,11 @@ class Group:
     def set_radius(self, radius):
         self.radius = radius
     
-    def add_member(self, mem_id):
+    def add_member(self, human):
         if not self.check_validity():
             print(f"Members are limited")
             return
-        self.members.append(mem_id)
+        self.members.append(human)
         self.config_group()  # Configure leader after adding first member
     
     def remove_member(self, mem_id):
@@ -33,7 +33,6 @@ class Group:
 
     def check_validity(self):
         return len(self.members) < self.max_member
-    
 
     def get_centroid(self):
         if self.centroid:
@@ -115,7 +114,7 @@ class Group:
     #         px, py = pos
     #         human.set(px, py, -px, -py, 0, 0, human.radius)
     
-    def position_members(self, human_list, all_positions, min_distance=0.5):
+    def position_members(self, robot, humans, min_distance=0.7):
         """
         Apply selected formation, set positions for each group member, and check for collisions.
         
@@ -125,30 +124,33 @@ class Group:
         """
         # Generate positions based on the selected formation
         positions = self.select_formation()
+        # positions = self.grid_formation()
         
         # Adjust positions if necessary to avoid collisions
-        adjusted_positions = []
-        for pos, mem_id in zip(positions, self.members):
+        # adjusted_positions = []
+        for pos, mem in zip(positions, self.members):
             px, py = pos
             collision = True
 
             # Try adjusting the position until there is no collision
             while collision:
                 collision = False
-                for other_pos in all_positions:
-                    if np.linalg.norm(np.array([px, py]) - np.array(other_pos)) < min_distance:
+                for i, agent in enumerate([robot] + humans):
+                    
+                    if np.linalg.norm((px - agent.px, py - agent.py)) < min_distance:
                         collision = True
                         # Apply random offset to try a new position (e.g., small shift within radius)
                         px += np.random.uniform(-0.2, 0.2)
                         py += np.random.uniform(-0.2, 0.2)
                         break  # Exit inner loop and recheck with updated position
 
-            # Set the position once it's confirmed to be collision-free
-            adjusted_positions.append((px, py))
-            all_positions.append((px, py))  # Add to all_positions to prevent future overlaps
-
+            
+            mem.set(px, py, -px, -py, 0, 0, mem.radius)  # Assuming `set` positions the human
+            humans.append(mem)
             # Set the position in the human object
-            human = human_list[mem_id]
-            human.set(px, py, -px, -py, 0, 0, human.radius)  # Assuming `set` positions the human
+            # human = humans[mem.id]
+            # human.set(px, py, -px, -py, 0, 0, human.radius)  # Assuming `set` positions the human
+        
+        return humans
 
 

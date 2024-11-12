@@ -77,7 +77,6 @@ def main():
 		log_file = os.path.join(test_args.model_dir, 'test', 'test_' + test_args.test_model + '.log')
 
 
-
 	file_handler = logging.FileHandler(log_file, mode='w')
 	stdout_handler = logging.StreamHandler(sys.stdout)
 	level = logging.INFO
@@ -87,7 +86,7 @@ def main():
 	logging.info('robot FOV %f', config.robot.FOV)
 	logging.info('humans FOV %f', config.humans.FOV)
 
-	numpy.random.rand(algo_args.seed)
+	numpy.random.seed(algo_args.seed)
 
 	torch.manual_seed(algo_args.seed)
 	torch.cuda.manual_seed_all(algo_args.seed)

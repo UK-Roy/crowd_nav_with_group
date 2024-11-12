@@ -40,6 +40,18 @@ class Config(object):
     
     reward.grp_collision_penalty = -21
     
+    # config for Groups
+    group = BaseConfig()
+    group.num_groups = 3
+     
+    group.min_size = 2 
+    group.max_size = 3
+    
+    group.min_distance = 2.0    
+    
+    group.min_radius = 1.0
+    group.max_radius = 1.5
+     
     # config for simulation
     sim = BaseConfig()
     sim.circle_radius = 6 * np.sqrt(2)

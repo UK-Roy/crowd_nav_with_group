@@ -483,8 +483,9 @@ class CrowdSimVarNum(CrowdSim):
         self.leader = {}
         self.leader_act = {}
         self.grp = []
+
         for i in range(self.num_groups):
-            self.grp.append(Group(i, self.group_size))
+            self.grp.append(Group(i, self.min_size, self.max_size))
         # self.human_num = self.config.sim.human_num
         # initialize a list to store observed humans' IDs
         self.observed_human_ids = []
@@ -621,41 +622,6 @@ class CrowdSimVarNum(CrowdSim):
 
         return ob, reward, done, info
 
-    
-
-    def cluster_by_distance(self, dist_matrix, d_threshold, visualize=False):
-        """
-        Clusters humans based on minimum distance using connected components.
-        :param dist_matrix: 2D numpy array of distances between humans.
-        :param d_threshold: Threshold distance for connecting humans.
-        :param visualize: Boolean to indicate whether to plot the graph.
-        :return: Dictionary mapping each cluster to list of human indices.
-        """
-        # Step 1: Create a binary adjacency matrix based on the threshold
-        adjacency_matrix = (dist_matrix < d_threshold).astype(int)
-        
-        # Step 2: Convert adjacency matrix to sparse matrix format
-        sparse_matrix = csr_matrix(adjacency_matrix)
-        
-        # Step 3: Create a graph from the sparse adjacency matrix
-        graph = nx.from_scipy_sparse_array(sparse_matrix)
-        
-        # Step 4: Find connected components in the graph
-        clusters = list(nx.connected_components(graph))
-        
-        # Step 5: Create a dictionary mapping clusters to human indices
-        cluster_dict = {i: list(cluster) for i, cluster in enumerate(clusters)}
-        
-        # Visualization
-        if visualize:
-            plt.figure(figsize=(8, 6))
-            pos = nx.spring_layout(graph)  # Position nodes using spring layout for better visualization
-            nx.draw(graph, pos, with_labels=True, node_size=500, node_color='skyblue', font_size=12, font_weight='bold', edge_color='gray')
-            plt.title("Graph Representation of Clusters Based on Minimum Distance")
-            plt.show()
-        
-        return cluster_dict
-    
     # find R(s, a)
     # danger_zone: how to define the personal_zone (if the robot intrudes into this zone, the info will be Danger)
     # circle (traditional) or future (based on true future traj of humans)
@@ -899,10 +865,6 @@ class CrowdSimVarNum(CrowdSim):
                 human_circles[i].set_color(c='b')
 
             plt.text(self.humans[i].px - 0.1, self.humans[i].py - 0.1, str(self.humans[i].id), color='black', fontsize=12)
-
-
-
-
 
         plt.pause(0.01)
         for item in artists:
