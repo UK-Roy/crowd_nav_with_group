@@ -289,12 +289,13 @@ class CrowdSimVarNum(CrowdSim):
                 visible_human_ids.append(self.humans[i].id)  # Track human_id
                 
                 # For Ground Truth Grouping 
-                group_id = self.humans[i].group_id
-                if group_id is not None:
-                    cluster_label = group_id
-                    if cluster_label not in cluster_dict:
-                        cluster_dict[group_id] = []
-                    cluster_dict[group_id].append(self.humans[i].id) 
+                if self.group_ground_truth:
+                    group_id = self.humans[i].group_id
+                    if group_id is not None:
+                        cluster_label = group_id
+                        if cluster_label not in cluster_dict:
+                            cluster_dict[group_id] = []
+                        cluster_dict[group_id].append(self.humans[i].id) 
         
         # print(cluster_dict)
 

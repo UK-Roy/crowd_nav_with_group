@@ -101,20 +101,18 @@ class Group:
         return positions
     
     def select_formation(self):
-        """Randomly select and apply a formation to group members."""
-        formations = [self.circle_formation, self.line_formation, self.v_shape_formation, self.grid_formation]
+        """Randomly select and apply a formation to group members, with certain formations excluded for group 0."""
+        formations = [self.circle_formation, self.v_shape_formation, self.grid_formation, self.line_formation]
+        
+        # Exclude line formation for group with ID 0
+        if self.id == 0:
+            formations.remove(self.line_formation)
+        
+        # Select and return the chosen formation function
         formation_function = np.random.choice(formations)
         return formation_function()
-
-    # def position_members(self, human_list):
-    #     """Apply selected formation and set positions for each group member in the simulation environment."""
-    #     positions = self.select_formation()
-    #     for pos, mem_id in zip(positions, self.members):
-    #         human = human_list[mem_id]
-    #         px, py = pos
-    #         human.set(px, py, -px, -py, 0, 0, human.radius)
-    
-    def position_members(self, robot, humans, min_distance=0.7):
+ 
+    def position_members(self, robot, humans, min_distance=0.9):
         """
         Apply selected formation, set positions for each group member, and check for collisions.
         

@@ -44,7 +44,7 @@ class CrowdSim(gym.Env):
         self.group_safety_buffer = None
         self.discomfort_group_dist = None
         self.grp_collision_penalty = None
-
+        
         # simulation configuration
         self.config = None
         self.case_capacity = None
@@ -65,8 +65,13 @@ class CrowdSim(gym.Env):
         self.num_groups = None 
         self.min_size = None
         self.max_size = None
+        
         self.group_min_radius = None
         self.group_max_radius = None
+        
+        self.group_dynamic = None
+        self.group_ground_truth = None
+        
         self.leader = {}
         self.leader_act = {}
         
@@ -131,6 +136,10 @@ class CrowdSim(gym.Env):
 
         self.group_min_radius = config.group.min_radius 
         self.group_max_radius = config.group.max_radius
+        
+        self.group_ground_truth = config.group.ground_truth
+
+        self.group_dynamic = config.group.dynamic
 
         self.case_capacity = {'train': np.iinfo(np.uint32).max - 2000, 'val': 1000, 'test': 1000}
         self.case_size = {'train': np.iinfo(np.uint32).max - 2000, 'val': self.config.env.val_size,
@@ -250,7 +259,9 @@ class CrowdSim(gym.Env):
                     radii = np.random.uniform(self.group_min_radius, self.group_max_radius)
                     self.grp[human.group_id].set_radius(radii)
                     self.humans = self.grp[human.group_id].position_members(self.robot, self.humans)
-                human.isObstacle = True
+                
+                if not self.group_dynamic or grp.id == 0:
+                    human.isObstacle = True
 
             else:
                 
@@ -299,7 +310,7 @@ class CrowdSim(gym.Env):
         for _ in range(max_attempts):
             px, py = np.random.uniform(-self.arena_size, self.arena_size, 2)
             # Check if the new centroid position is at least min_distance away from existing centroids
-            if all(np.linalg.norm(np.array([px, py]) - np.array(other_centroid)) >= min_distance 
+            if all(np.linalg.norm(np.array([px, py]) - np.array(other_centroid)) >= (min_distance + self.group_max_radius)
                 for other_centroid in existing_centroids):
                 return px, py
         raise ValueError("Unable to find a non-overlapping position after maximum attempts")
