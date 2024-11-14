@@ -81,6 +81,9 @@ def main(com, log_dir, type):
     else:
         log_file = os.path.join(log_dir, 'test_' + config.robot.policy + '.log')
 
+    # Clear existing logging configuration
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
 
     file_handler = logging.FileHandler(log_file, mode='w')
     stdout_handler = logging.StreamHandler(sys.stdout)
