@@ -32,6 +32,8 @@ def main():
 	parser.add_argument('--render_traj', default=False, action='store_true')
 	# whether to save slide show of episodes
 	parser.add_argument('--save_slides', default=True, action='store_true')
+	# Benchmarking
+	parser.add_argument('--benchmarking', default=False, action='store_true')
 	test_args = parser.parse_args()
 	if test_args.save_slides:
 		test_args.visualize = True

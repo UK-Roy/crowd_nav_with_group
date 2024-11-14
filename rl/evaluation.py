@@ -221,7 +221,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
     collision_rate = collision / test_size
     grp_collision_rate = grp_collision / test_size
     timeout_rate = timeout / test_size
-    assert success + collision + timeout == test_size
+    assert success + collision + grp_collision + timeout == test_size
     avg_nav_time = sum(success_times) / len(
         success_times) if success_times else time_limit  # baseEnv.env.time_limit
 

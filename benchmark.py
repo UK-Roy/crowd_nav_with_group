@@ -1,67 +1,175 @@
-import re
-import subprocess
-import itertools
-from benchmark_config import config_updates
+import logging
+import argparse
+import os
+import sys
+import yaml
+from matplotlib import pyplot as plt
+import numpy
+import torch
+import torch.nn as nn
 
-def update_config_parameter(config_file, param_name, new_value):
+from rl.networks.envs import make_vec_envs
+from rl.evaluation import evaluate
+from rl.networks.model import Policy
+
+from crowd_sim import *
+
+
+def main(com, log_dir, type):
     """
-    Update a specific parameter in the config file.
+    The main function for testing a trained model
     """
-    with open(config_file, 'r') as file:
-        lines = file.readlines()
-        
-    # Ensure the new value is a string, wrapping in quotes if necessary
-    if isinstance(new_value, str):
-        new_value = f"'{new_value}'"  # Wrap string values in quotes
+    # the following parameters will be determined for each test run
+    parser = argparse.ArgumentParser('Parse configuration file')
+    # the model directory that we are testing
+    parser.add_argument('--model_dir', type=str, default='trained_models/GST_predictor_rand')
+    # render the environment or not
+    parser.add_argument('--visualize', default=False, action='store_true')
+    # if -1, it will run 500 different cases; if >=0, it will run the specified test case repeatedly
+    parser.add_argument('--test_case', type=int, default=-1)
+    # model weight file you want to test
+    parser.add_argument('--test_model', type=str, default='41665.pt')
+    # whether to save trajectories of episodes
+    parser.add_argument('--render_traj', default=False, action='store_true')
+    # whether to save slide show of episodes
+    parser.add_argument('--save_slides', default=False, action='store_true') 
+    test_args = parser.parse_args()
+    if test_args.save_slides:
+        test_args.visualize = True
+
+    from importlib import import_module
+    model_dir_temp = test_args.model_dir
+    if model_dir_temp.endswith('/'):
+        model_dir_temp = model_dir_temp[:-1]
+    # import arguments.py from saved directory
+    # if not found, import from the default directory
+    try:
+        model_dir_string = model_dir_temp.replace('/', '.') + '.arguments'
+        model_arguments = import_module(model_dir_string)
+        get_args = getattr(model_arguments, 'get_args')
+    except:
+        print('Failed to get get_args function from ', test_args.model_dir, '/arguments.py')
+        from arguments import get_args
+
+    algo_args = get_args()
+    # import config class from saved directory
+    # if not found, import from the default directory
+
+    try:
+        model_dir_string = model_dir_temp.replace('/', '.') + '.configs.config'
+        model_arguments = import_module(model_dir_string)
+        Config = getattr(model_arguments, 'Config')
+
+    except:
+        print('Failed to get Config function from ', test_args.model_dir)
+        from crowd_nav.configs.config import Config
+
+    env_config = config = Config()
+
+    for key, val in com.items():
+        for k, v in val.items():
+            setattr(getattr(config, key), k, v)
+            print(f"Robot policy set to {v}")  
+
+    # configure logging and device
+    # print test result in log file
+    log_dir = os.path.join(log_dir,type)
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    if test_args.visualize:
+        log_file = os.path.join(log_dir, f'{config.robot.policy}_test_visual.log')
+    else:
+        log_file = os.path.join(log_dir, 'test_' + config.robot.policy + '.log')
+
+
+    file_handler = logging.FileHandler(log_file, mode='w')
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    level = logging.INFO
+    logging.basicConfig(level=level, handlers=[stdout_handler, file_handler],
+                        format='%(asctime)s, %(levelname)s: %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
+
+    logging.info('robot FOV %f', config.robot.FOV)
+    logging.info('humans FOV %f', config.humans.FOV)
+
+    numpy.random.seed(algo_args.seed)
+
+    torch.manual_seed(algo_args.seed)
+    torch.cuda.manual_seed_all(algo_args.seed)
+    if algo_args.cuda:
+        if algo_args.cuda_deterministic:
+            # reproducible but slower
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+        else:
+            # not reproducible but faster
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.deterministic = False
+
+
+    torch.set_num_threads(1)
+    device = torch.device("cuda" if algo_args.cuda else "cpu")
+    # device = torch.device("cpu")
+
+    logging.info('Create other envs with new settings')
+
+    # set up visualization
+    if test_args.visualize:
+        fig, ax = plt.subplots(figsize=(7, 7))
+        ax.set_xlim(-6.5, 6.5) # 6
+        ax.set_ylim(-6.5, 6.5)
+        ax.axes.xaxis.set_visible(False)
+        ax.axes.yaxis.set_visible(False)
+        # ax.set_xlabel('x(m)', fontsize=16)
+        # ax.set_ylabel('y(m)', fontsize=16)
+        plt.ion()
+        plt.show()
+    else:
+        ax = None
+
+    load_path=os.path.join(test_args.model_dir,'checkpoints', test_args.test_model)
+    print(load_path)
+
+    # create an environment
+    env_name = algo_args.env_name
+
+    eval_dir = os.path.join(test_args.model_dir,'eval')
+    if not os.path.exists(eval_dir):
+        os.mkdir(eval_dir)
+
+    env_config.render_traj = test_args.render_traj
+    env_config.save_slides = test_args.save_slides
+    env_config.save_path = os.path.join(test_args.model_dir, 'social_eval', test_args.test_model[:-3])
+    envs = make_vec_envs(env_name, algo_args.seed, 1,
+                            algo_args.gamma, eval_dir, device, allow_early_resets=True,
+                            config=env_config, ax=ax, test_case=test_args.test_case, pretext_wrapper=config.env.use_wrapper)
+
+    if config.robot.policy not in ['orca', 'social_force']:
+        # load the policy weights
+        actor_critic = Policy(
+            envs.observation_space.spaces,
+            envs.action_space,
+            base_kwargs=algo_args,
+            base=config.robot.policy)
+        actor_critic.load_state_dict(torch.load(load_path, map_location=device))
+        actor_critic.base.nenv = 1
+
+        # allow the usage of multiple GPUs to increase the number of examples processed simultaneously
+        nn.DataParallel(actor_critic).to(device)
+    else:
+        actor_critic = None
+
+    test_size = config.env.test_size
+
+    # call the evaluation function
+    evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args, test_args.visualize, group_avoid_action=False)
+
+
+if __name__ == '__main__':
     
-    # Loop through each line to find and update the specified parameter
-    for i, line in enumerate(lines):
-        if re.match(rf'\s*{param_name}\s*=', line):  # Match the line with the parameter
-            lines[i] = f"    {param_name} = {new_value}\n"
-            break
+    # Load the YAML file
+    with open("config.yml", "r") as file:
+        config_data = yaml.safe_load(file)
     
-    # Write the updated lines back to the config file
-    with open(config_file, 'w') as file:
-        file.writelines(lines)
-
-def benchmark(config_file, test_script):
-    """
-    Iterate over all config parameters in the benchmark list and update the config file.
-    """
-    keys = list(config_updates.keys())
-    value_combinations = list(itertools.product(*config_updates.values()))
-
-    # Loop through all combinations and update the config file accordingly
-    for combination in value_combinations:
-        # Update the config file for each combination
-        for idx, param_name in enumerate(keys):
-            value = combination[idx]
-            print(f"Updating {param_name} to {value}...")
-            update_config_parameter(config_file, param_name, value)
-            print(f"{param_name} set to {value}")
-            
-        # Use the first value in the list as the log file name prefix
-        log_filename = f"logs/{param_name}_{value}.log"
-        
-        # Run the test and save the results in the log file
-        # run_test_and_save_log(test_script, log_filename)
-        # print(f"Results saved in {log_filename}")
-
-def run_test_and_save_log(test_script, log_filename):
-    """
-    Run the test script and save the output to a log file.
-    """
-    with open(log_filename, 'w') as log_file:
-        # Run the test.py script and capture the output
-        process = subprocess.Popen(
-            ['python', test_script],
-            stdout=log_file,
-            stderr=log_file
-        )
-        process.communicate()  # Wait for the process to finish
-
-# Example usage
-if __name__ == "__main__":
-    config_file = 'config.py'  # Path to your config.py file
-    test_script = 'test.py'  # Path to your test script
-    benchmark(config_file, test_script)
+    for com in config_data["combinations"]:
+        com.pop("combination") 
+        main(com, log_dir=f'benchmark_results', type=f'static')
