@@ -25,7 +25,7 @@ def main(com, log_dir, type):
     parser.add_argument('--model_dir', type=str, default='trained_models/GST_predictor_rand')
     # render the environment or not
     parser.add_argument('--visualize', default=False, action='store_true')
-    # if -1, it will run 500 different cases; if >=0, it will run the specified test case repeatedly
+    # if -1, it will run 100 different cases; if >=0, it will run the specified test case repeatedly
     parser.add_argument('--test_case', type=int, default=-1)
     # model weight file you want to test
     parser.add_argument('--test_model', type=str, default='41665.pt')

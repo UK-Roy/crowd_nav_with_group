@@ -34,6 +34,26 @@ class Config(object):
     reward.discomfort_penalty_factor = 10
     reward.gamma = 0.99
 
+    reward.group_safety_buffer = 0.1
+    reward.discomfort_group_dist = 0.05
+    
+    reward.grp_collision_penalty = -21
+
+    # config for Groups
+    group = BaseConfig()
+    group.num_groups = 2
+     
+    group.min_size = 3 
+    group.max_size = 4
+    
+    group.min_distance = 2.0    
+    
+    group.min_radius = 1.0
+    group.max_radius = 1.3
+    
+    group.dynamic = False
+    group.ground_truth = True
+
     # config for simulation
     sim = BaseConfig()
     sim.circle_radius = 6 * np.sqrt(2)

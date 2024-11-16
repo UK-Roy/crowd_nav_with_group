@@ -22,6 +22,7 @@ def main():
 	parser = argparse.ArgumentParser('Parse configuration file')
 	# the model directory that we are testing
 	parser.add_argument('--model_dir', type=str, default='trained_models/GST_predictor_rand')
+	# parser.add_argument('--model_dir', type=str, default='trained_models/SF_no_rand')
 	# render the environment or not
 	parser.add_argument('--visualize', default=True, action='store_true')
 	# if -1, it will run 500 different cases; if >=0, it will run the specified test case repeatedly

@@ -234,6 +234,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                    np.mean(too_close_ratios), np.mean(min_dist)))
 
     logging.info('Collision cases: ' + ' '.join([str(x) for x in collision_cases]))
+    logging.info('Group Collision cases: ' + ' '.join([str(x) for x in grp_collision_cases]))
     logging.info('Timeout cases: ' + ' '.join([str(x) for x in timeout_cases]))
     print(" Evaluation using {} episodes: mean reward {:.5f}\n".format(
         len(eval_episode_rewards), np.mean(eval_episode_rewards)))

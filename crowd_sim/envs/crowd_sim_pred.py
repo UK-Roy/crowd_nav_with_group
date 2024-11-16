@@ -101,7 +101,8 @@ class CrowdSimPred(CrowdSimVarNum):
         step function
         Compute actions for all agents, detect collision, update environment and return (ob, reward, done, info)
         """
-        if self.robot.policy.name == 'ORCA' or self.robot.policy.name == 'SOCIAL_FORCE':
+        if self.robot.policy.name == 'ORCA':
+        # if self.robot.policy.name == 'ORCA' or self.robot.policy.name == 'social_force':
             # assemble observation for orca: px, py, vx, vy, r
             # include all observable humans from t to t+t_pred
             _, _, human_visibility = self.get_num_human_in_fov()
@@ -112,6 +113,11 @@ class CrowdSimPred(CrowdSimVarNum):
                                            np.tile(self.last_human_states[:, -1], self.predict_steps+1).reshape((-1, 1))),
                                           axis=1)
             # get orca action
+            action = self.robot.act(human_states.tolist())
+        elif self.robot.policy.name == 'social_force':
+            # assemble observation for social_force: px, py, vx, vy, r
+            human_states = copy.deepcopy(self.last_human_states)
+            # get action
             action = self.robot.act(human_states.tolist())
         else:
             action = self.robot.policy.clip_action(action, self.robot.v_pref)
