@@ -164,7 +164,7 @@ def main(com, log_dir, type):
     test_size = config.env.test_size
 
     # call the evaluation function
-    evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args, test_args.visualize, group_avoid_action=False)
+    evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args, test_args.visualize, group_avoid_action=True)
 
 
 if __name__ == '__main__':
@@ -175,4 +175,4 @@ if __name__ == '__main__':
     
     for com in config_data["combinations"]:
         com.pop("combination") 
-        main(com, log_dir=f'benchmark_results', type=f'static')
+        main(com, log_dir=f'benchmark_results', type=f'static-avoid')

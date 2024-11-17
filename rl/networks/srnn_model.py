@@ -375,7 +375,8 @@ class SRNN(nn.Module):
 
 
         self.critic_linear = init_(nn.Linear(hidden_size, 1))
-        robot_size = 7 if args.env_name == 'crowd_sim' else 2
+        # robot_size = 7 if args.env_name == 'crowd_sim' else 2
+        robot_size = 7
         self.robot_linear = init_(nn.Linear(robot_size, 3))
         self.human_node_final_linear=init_(nn.Linear(self.output_size,2))
 

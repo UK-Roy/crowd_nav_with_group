@@ -7,9 +7,9 @@ combinations:
     robot:
       policy: "social_force"
  
-  - combination: 3
-    robot:
-      policy: "selfAttn_merge_srnn"
+  # - combination: 3
+  #   robot:
+  #     policy: "selfAttn_merge_srnn"
 
   # - combination: 5
   #   robot:
