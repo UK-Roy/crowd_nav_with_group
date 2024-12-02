@@ -5,7 +5,7 @@ import os
 import numpy as np
 from tqdm import trange
 
-from crowd_nav.configs.config import Config
+from crowd_nav.configs.oldconfig import Config
 from rl.networks.envs import make_vec_envs
 from crowd_sim.envs import *
 

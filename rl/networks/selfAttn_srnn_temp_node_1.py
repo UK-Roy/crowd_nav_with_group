@@ -2,56 +2,6 @@ import torch.nn.functional as F
 
 from .srnn_model import *
 
-class GroupAttention_M(nn.Module):
-    """
-    Class for the robot-group attention module.
-    """
-    def __init__(self, args):
-        super(GroupAttention_M, self).__init__()
-        self.args = args
-        self.group_attention_size = args.group_attention_size
-        self.attention_size = args.attention_size
-        self.robot_embed_dim = args.human_node_embedding_size 
-        self.group_embed_dim = args.group_node_embedding_size  
-
-        # Linear layers for embedding robot and group states
-        self.robot_embedding_layer = nn.Linear(256, self.robot_embed_dim)
-        self.group_embedding_layer = nn.Linear(self.group_embed_dim, self.attention_size)
-
-        # Layer for computing attention scores
-        self.attention_layer = nn.Linear(self.group_attention_size + self.robot_embed_dim, 1)
-
-    def forward(self, robot_states, group_embeddings):
-        """
-        Forward pass for robot-group interaction.
-        params:
-        - robot_state: Robot state features (seq_len, nenv, robot_dim)
-        - group_embeddings: Group features (seq_len, nenv, num_groups, group_dim)
-        """
-        seq_len, nenv, num_groups, group_dim = group_embeddings.shape
-
-        # Embed robot state
-        robot_embed = self.robot_embedding_layer(robot_states)  # (seq_len, nenv, robot_embed_dim)
-
-        # Embed group states
-        group_embed = self.group_embedding_layer(group_embeddings)  # (seq_len, nenv, num_groups, attention_size)
-
-        # Compute attention scores
-        robot_embed = robot_embed.repeat_interleave(num_groups, dim=2)  # (seq_len, nenv, num_groups, robot_embed_dim)
-        combined_features = torch.cat([robot_embed, group_embed], dim=-1)  # Concatenate robot and group embeddings
-        attention_scores = self.attention_layer(combined_features).squeeze(-1)  # (seq_len, nenv, num_groups)
-
-        # Normalize attention scores
-        attention_weights = torch.softmax(attention_scores, dim=-1)  # (seq_len, nenv, num_groups)
-
-        # Compute weighted group interaction
-        weighted_group_interaction = torch.sum(
-            attention_weights.unsqueeze(-1) * group_embeddings, dim=2
-        )  # (seq_len, nenv, group_dim)
-
-        return weighted_group_interaction, attention_weights
-
-
 class SpatialEdgeSelfAttn(nn.Module):
     """
     Class for the human-human attention,
@@ -76,6 +26,8 @@ class SpatialEdgeSelfAttn(nn.Module):
             self.input_size = 2 # 4
         else:
             raise NotImplementedError
+        
+        self.group_input_size=self.input_size+6
         self.num_attn_heads=8
         self.attn_size=512
 
@@ -161,7 +113,8 @@ class EdgeAttention_M(nn.Module):
         self.human_human_edge_rnn_size = args.human_human_edge_rnn_size
         self.human_node_rnn_size = args.human_node_rnn_size
         self.attention_size = args.attention_size
-
+        self.group_attention_size = args.group_attention_size
+        self.group_embedding_size = args.human_node_embedding_size 
 
 
         # Linear layer to embed temporal edgeRNN hidden state
@@ -173,7 +126,8 @@ class EdgeAttention_M(nn.Module):
         # Linear layer to embed spatial edgeRNN hidden states
         self.spatial_edge_layer.append(nn.Linear(self.human_human_edge_rnn_size, self.attention_size))
 
-
+        # Layers for group-level attention
+        self.group_edge_layer = nn.Linear(self.group_embedding_size, 1)
 
         # number of agents who have spatial edges (complete graph: all 6 agents; incomplete graph: only the robot)
         self.agent_num = 1
@@ -191,47 +145,49 @@ class EdgeAttention_M(nn.Module):
         # remove the sentinel
         mask = mask[:, :-1].unsqueeze(-2)  # seq_len*nenv, 1, max_human_num
         return mask
+    
+    def att_func(self, temporal_embed, spatial_embed, h_spatials,attn_mask=None, group_embeddings=None):
+        seq_len, nenv, num_edges, h_size = h_spatials.size()  # [seq_len, nenv, num_edges, h_size]
 
-    def att_func(self, temporal_embed, spatial_embed, h_spatials, attn_mask=None):
-        seq_len, nenv, num_edges, h_size = h_spatials.size()  # [1, 12, 30, 256] in testing,  [12, 30, 256] in training
-        attn = temporal_embed * spatial_embed
-        attn = torch.sum(attn, dim=3)
+        # **Individual Attention**
+        attn = temporal_embed * spatial_embed  # Element-wise product for attention computation
+        attn = torch.sum(attn, dim=3)  # Summing across the embedding dimension
 
-        # Variable length
+        # Variable length temperature scaling
         temperature = num_edges / np.sqrt(self.attention_size)
         attn = torch.mul(attn, temperature)
 
-        # if we don't want to mask invalid humans, attn_mask is None and no mask will be applied
-        # else apply attn masks
+        # Mask invalid humans if `attn_mask` is provided
         if attn_mask is not None:
             attn = attn.masked_fill(attn_mask == 0, -1e9)
 
-        # Softmax
-        attn = attn.view(seq_len, nenv, self.agent_num, self.human_num)
+        # Apply softmax to normalize attention weights
         attn = torch.nn.functional.softmax(attn, dim=-1)
-        # print(attn[0, 0, 0].cpu().numpy())
 
-        # Compute weighted value
-        # weighted_value = torch.mv(torch.t(h_spatials), attn)
-
-        # reshape h_spatials and attn
-        # shape[0] = seq_len, shape[1] = num of spatial edges (6*5 = 30), shape[2] = 256
+        # Compute weighted values for individual humans
         h_spatials = h_spatials.view(seq_len, nenv, self.agent_num, self.human_num, h_size)
-        h_spatials = h_spatials.view(seq_len * nenv * self.agent_num, self.human_num, h_size).permute(0, 2,
-                                                                                         1)  # [seq_len*nenv*6, 5, 256] -> [seq_len*nenv*6, 256, 5]
+        h_spatials = h_spatials.view(seq_len * nenv * self.agent_num, self.human_num, h_size).permute(0, 2, 1)
+        attn = attn.view(seq_len * nenv * self.agent_num, self.human_num).unsqueeze(-1)
+        weighted_value = torch.bmm(h_spatials, attn)  # Batch matrix multiplication
+        weighted_value = weighted_value.squeeze(-1).view(seq_len, nenv, self.agent_num, h_size)
 
-        attn = attn.view(seq_len * nenv * self.agent_num, self.human_num).unsqueeze(-1)  # [seq_len*nenv*6, 5, 1]
-        weighted_value = torch.bmm(h_spatials, attn)  # [seq_len*nenv*6, 256, 1]
+        # **Group Attention (New Part)**
+        if group_embeddings is not None:
+            group_attn_weights = torch.softmax(group_embeddings, dim=-1)  # Normalize group attention
+            group_weighted_value = torch.bmm(group_attn_weights.unsqueeze(1), group_embeddings).squeeze(1)  # Batch matmul
 
-        # reshape back
-        weighted_value = weighted_value.squeeze(-1).view(seq_len, nenv, self.agent_num, h_size)  # [seq_len, 12, 6 or 1, 256]
-        return weighted_value, attn
+            # Combine individual and group attention
+            combined_value = torch.cat((weighted_value, group_weighted_value.unsqueeze(1)), dim=-1)
+        else:
+            # If no group embeddings, fallback to individual attention
+            combined_value = weighted_value
 
+        return combined_value, attn
 
 
     # h_temporal: [seq_len, nenv, 1, 256]
     # h_spatials: [seq_len, nenv, 5, 256]
-    def forward(self, h_temporal, h_spatials, each_seq_len):
+    def forward(self, h_temporal, h_spatials, each_seq_len, group_embeddings):
         '''
         Forward pass for the model
         params:
@@ -263,14 +219,42 @@ class EdgeAttention_M(nn.Module):
                 attn_mask = attn_mask.squeeze(-2).view(seq_len, nenv, max_human_num)
             else:
                 attn_mask = each_seq_len
+            
+            # Maybe it can be edited
             weighted_value,attn=self.att_func(temporal_embed, spatial_embed, h_spatials, attn_mask=attn_mask)
             weighted_value_list.append(weighted_value)
             attn_list.append(attn)
+            
+        # Compute group-level attention
+        seq_env_size = nenv * seq_len  # Flattened batch size for batched computation
+        group_attention_scores = self.group_edge_layer(group_embeddings)  # Shape: (seq_len, nenv, num_groups, 1)
+        group_attention_scores = group_attention_scores.squeeze(-1)  # Shape: (seq_len, nenv, num_groups)
+        group_attention_weights = torch.softmax(group_attention_scores, dim=-1)  # Normalize across groups
+
+        # Reshape group embeddings and weights for batch matrix multiplication
+        group_embeddings = group_embeddings.view(seq_env_size, -1, group_embeddings.size(-1))
+        group_attention_weights = group_attention_weights.view(seq_env_size, -1, 1)
+
+        # Compute weighted group embeddings
+        group_weighted_value = torch.bmm(group_attention_weights.transpose(1, 2), group_embeddings)
+        group_weighted_value = group_weighted_value.view(seq_len, nenv, -1)  # Shape: (seq_len, nenv, embed_dim)
+
+        # Combine individual and group-level attention
+        combined_attention = torch.cat((weighted_value_list[0], group_weighted_value.unsqueeze(2)), dim=-1)
 
         if self.num_attention_head > 1:
-            return self.final_attn_linear(torch.cat(weighted_value_list, dim=-1)), attn_list
+            # Aggregate multiple attention heads
+            # must be added for group_weighted_value unsqueeze(2)
+            individual_attention = self.final_attn_linear(torch.cat(weighted_value_list, dim=-1))
+            combined_attention = torch.cat((individual_attention, group_weighted_value.unsqueeze(1)), dim=-1)
+            return combined_attention, attn_list  # Multi-head attention structure
         else:
-            return weighted_value_list[0], attn_list[0]
+            # Single head: Direct combination of attention
+            return combined_attention, attn_list[0]
+        # if self.num_attention_head > 1:
+        #     return self.final_attn_linear(torch.cat(weighted_value_list, dim=-1)), attn_list
+        # else:
+        #     return weighted_value_list[0], attn_list[0]
 
 class EndRNN(RNNBase):
     '''
@@ -293,7 +277,6 @@ class EndRNN(RNNBase):
         self.embedding_size = args.human_node_embedding_size
         self.input_size = args.human_node_input_size
         self.edge_rnn_size = args.human_human_edge_rnn_size
-        self.group_embedd_size = args.group_attention_size
 
         # Linear layer to embed input
         self.encoder_linear = nn.Linear(256, self.embedding_size)
@@ -302,15 +285,17 @@ class EndRNN(RNNBase):
         self.relu = nn.ReLU()
 
         # Linear layer to embed attention module output
-        self.edge_attention_embed = nn.Linear(self.edge_rnn_size + self.group_embedd_size, self.embedding_size)
+        self.edge_attention_embed = nn.Linear(self.edge_rnn_size + 64, self.embedding_size)
 
+        # Linear layer for group embeddings
+        self.group_attention_embed = nn.Linear(64, self.embedding_size)  # New layer for group embeddings
 
         # Output linear layer
         self.output_linear = nn.Linear(self.rnn_size, self.output_size)
 
 
 
-    def forward(self, robot_s, h_spatial_other, h, masks):
+    def forward(self, robot_s, h_spatial_other, h, masks, group_embeddings=None):
         '''
         Forward pass for the model
         params:
@@ -323,10 +308,16 @@ class EndRNN(RNNBase):
         # Encode the input position
         encoded_input = self.encoder_linear(robot_s)
         encoded_input = self.relu(encoded_input)
-
+        
+        # Embed individual attention (human-level features)
         h_edges_embedded = self.relu(self.edge_attention_embed(h_spatial_other))
+        
+        # Embed group-level attention
+        h_groups_embedded = self.relu(self.group_attention_embed(group_embeddings))
 
-        concat_encoded = torch.cat((encoded_input, h_edges_embedded), -1)
+        # Combine individual and group embeddings with robot state
+        concat_encoded = torch.cat((encoded_input, h_edges_embedded, h_groups_embedded), dim=-1)
+        # concat_encoded = torch.cat((encoded_input, h_edges_embedded), -1)
 
         x, h_new = self._forward_gru(concat_encoded, h, masks)
 
@@ -356,7 +347,8 @@ class selfAttn_merge_SRNN(nn.Module):
         self.seq_length = args.seq_length
         self.nenv = args.num_processes
         self.nminibatch = args.num_mini_batch
-
+        
+        self.group_input_size=12+6
         # Store required sizes
         self.human_node_rnn_size = args.human_node_rnn_size
         self.human_human_edge_rnn_size = args.human_human_edge_rnn_size
@@ -367,10 +359,6 @@ class selfAttn_merge_SRNN(nn.Module):
 
         # Initialize attention module
         self.attn = EdgeAttention_M(args)
-        
-        # Initialize the Group attention module
-        self.group_attn = GroupAttention_M(args)
-        self.group_input_size=12+6
 
 
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
@@ -410,15 +398,10 @@ class selfAttn_merge_SRNN(nn.Module):
         else:
             self.dummy_human_mask = Variable(torch.Tensor([dummy_human_mask]).cuda())
         
-        
-        # Group Embedding
-        self.grp_embed = args.group_node_embedding_size
         # Group Linear layer to embed group input
-        self.group_embedding_layer = nn.Sequential(nn.Linear(self.group_input_size, self.grp_embed), nn.ReLU(),
+        self.group_embedding_layer = nn.Sequential(nn.Linear(self.group_input_size, 64), nn.ReLU(),
                                              nn.Linear(64, 64), nn.ReLU()
                                              )
-        # ReLU and Dropout layers
-        self.relu = nn.ReLU()
 
 
 
@@ -436,7 +419,7 @@ class selfAttn_merge_SRNN(nn.Module):
         robot_node = reshapeT(inputs['robot_node'], seq_length, nenv)
         temporal_edges = reshapeT(inputs['temporal_edges'], seq_length, nenv)
         spatial_edges = reshapeT(inputs['spatial_edges'], seq_length, nenv)
-        # group_embeddings = reshapeT(inputs['group_embeddings'], seq_length, nenv)
+        
         group_embeddings = self.compute_group_embeddings(inputs, seq_length, nenv)
 
         # to prevent errors in old models that does not have sort_humans argument
@@ -474,8 +457,8 @@ class selfAttn_merge_SRNN(nn.Module):
                 spatial_attn_out = spatial_edges
             output_spatial = self.spatial_linear(spatial_attn_out)
 
-            # robot-human attention
-            hidden_attn_weighted, _ = self.attn(robot_states, output_spatial, detected_human_num)
+            # robot-human and robot-group attention
+            hidden_attn_weighted, _ = self.attn(robot_states, output_spatial, detected_human_num, group_embeddings=group_embeddings)
         else:
             # human-human attention
             if self.args.use_self_attn:
@@ -485,23 +468,12 @@ class selfAttn_merge_SRNN(nn.Module):
             output_spatial = self.spatial_linear(spatial_attn_out)
 
             # robot-human attention
-            hidden_attn_weighted, _ = self.attn(robot_states, output_spatial, human_masks)
+            hidden_attn_weighted, _ = self.attn(robot_states, output_spatial, human_masks, group_embeddings=group_embeddings)
 
-        # robot-group attension
-        group_weighted_value, group_attention_weights = self.group_attn(robot_states, group_embeddings)
 
-        # h_individual_scaled = hidden_attn_weighted * alpha
-        # h_group_scaled = group_weighted_value * (1 - alpha)
-        
-        # Combine interactions
-        combined_attention = torch.cat([hidden_attn_weighted, group_weighted_value.unsqueeze(2)], dim=-1)
-
-        
         # Do a forward pass through GRU
         outputs, h_nodes \
-            = self.humanNodeRNN(robot_states, combined_attention, hidden_states_node_RNNs, masks)
-            # = self.humanNodeRNN(robot_states, hidden_attn_weighted, hidden_states_node_RNNs, masks)
-
+            = self.humanNodeRNN(robot_states, hidden_attn_weighted, hidden_states_node_RNNs, masks, group_embeddings=group_embeddings)
 
         # Update the hidden and cell states
         all_hidden_states_node_RNNs = h_nodes
@@ -525,6 +497,7 @@ class selfAttn_merge_SRNN(nn.Module):
         else:
             return self.critic_linear(hidden_critic).view(-1, 1), hidden_actor.view(-1, self.output_size), rnn_hxs
     
+
     def compute_group_embeddings(self, input_dict, seq_length, nenv):
         """
         Compute group embeddings for a multi-environment setup, ignoring `-1` clusters.
@@ -579,12 +552,12 @@ class selfAttn_merge_SRNN(nn.Module):
             group_embeddings.append(group_embedding)
 
         # print(f"Type of group_embeddings: {type(group_embeddings)}")
-        # if isinstance(group_embeddings, list):
-        #     # print(f"Number of elements in group_embeddings: {len(group_embeddings)}")
-        #     for i, emb in enumerate(group_embeddings):
-        #         print(f"Shape of group_embedding[{i}]: {emb.shape if isinstance(emb, torch.Tensor) else 'Invalid Tensor'}")
-        # else:
-        #     print("group_embeddings is not a list!")
+        if isinstance(group_embeddings, list):
+            # print(f"Number of elements in group_embeddings: {len(group_embeddings)}")
+            for i, emb in enumerate(group_embeddings):
+                print(f"Shape of group_embedding[{i}]: {emb.shape if isinstance(emb, torch.Tensor) else 'Invalid Tensor'}")
+        else:
+            print("group_embeddings is not a list!")
         
         # Stack group embeddings along a new group dimension
         group_embeddings = torch.stack(group_embeddings, dim=2)  # (seq_len, nenv, num_groups, embedding_dim)
@@ -595,17 +568,10 @@ class selfAttn_merge_SRNN(nn.Module):
         seq_len, nenv, num_groups, embedding_dim = group_embeddings.shape  # Assume embedding_dim=18
 
         # Flatten the input to (seq_len * nenv * num_groups, embedding_dim)
-        group_embeddings_flat = group_embeddings.view(-1, embedding_dim) 
-        
-        # group_embeddings_flat = torch.clamp(group_embeddings_flat, min=-1e5, max=1e5)
-        # group_embeddings_flat = torch.nn.functional.normalize(group_embeddings_flat, p=2, dim=-1)
+        group_embeddings_flat = group_embeddings.view(-1, embedding_dim)
 
         # Pass through the linear layer
-        embeddings = self.relu(self.group_embedding_layer(group_embeddings_flat))  # Shape: (seq_len * nenv * num_groups, hidden_dim)
-        
-        # Check for NaN in output
-        if torch.isnan(embeddings).any():
-            raise ValueError("NaN detected in embeddings")
+        embeddings = self.group_embedding_layer(group_embeddings_flat)  # Shape: (seq_len * nenv * num_groups, hidden_dim)
 
         # Reshape back to (seq_len, nenv, num_groups, hidden_dim)
         group_embeddings = embeddings.view(seq_len, nenv, num_groups, -1)
@@ -613,7 +579,6 @@ class selfAttn_merge_SRNN(nn.Module):
         # input_emb=self.embedding_layer(inp).view(seq_len*nenv, max_human_num, -1)
 
         return group_embeddings
-
 
 def reshapeT(T, seq_length, nenv):
     shape = T.size()[1:]

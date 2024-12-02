@@ -54,6 +54,8 @@ class Config(object):
     
     group.dynamic = False
     group.ground_truth = True
+    
+    group.avoid_action = False
      
     # config for simulation
     sim = BaseConfig()
@@ -120,7 +122,7 @@ class Config(object):
     robot.visible = False
     # For baseline: srnn; our method: selfAttn_merge_srnn
     # robot.policy = 'selfAttn_merge_srnn'
-    robot.policy = 'srnn'
+    robot.policy = 'selfAttn_merge_srnn'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"

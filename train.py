@@ -17,6 +17,7 @@ from rl.networks.storage import RolloutStorage
 
 
 from crowd_nav.configs.config import Config
+# from crowd_nav.configs.oldconfig import Config
 from crowd_sim import *
 
 
@@ -39,7 +40,7 @@ def main():
 		os.makedirs(save_config_dir)
 	shutil.copy('crowd_nav/configs/config.py', save_config_dir)
 	shutil.copy('crowd_nav/configs/__init__.py', save_config_dir)
-	shutil.copy('arguments.py', algo_args.output_dir)
+	# shutil.copy('arguments.py', algo_args.output_dir)
 
 
 	env_config = config = Config()
@@ -63,6 +64,7 @@ def main():
 
 
 	env_name = algo_args.env_name
+	# algo_args.group_attention_size = config.group.num_groups
 
 	if config.sim.render:
 		algo_args.num_processes = 1
@@ -122,8 +124,6 @@ def main():
 		lr=algo_args.lr,
 		eps=algo_args.eps,
 		max_grad_norm=algo_args.max_grad_norm)
-
-
 
 	obs = envs.reset()
 	if isinstance(obs, dict):

@@ -18,7 +18,7 @@ class Config(object):
     env.time_limit = 50
     env.time_step = 0.25
     env.val_size = 100
-    env.test_size = 100
+    env.test_size = 500
     # if randomize human behaviors, set to True, else set to False
     env.randomize_attributes = True
     env.num_processes = args.num_processes
@@ -34,29 +34,7 @@ class Config(object):
     reward.discomfort_dist = 0.25
     reward.discomfort_penalty_factor = 10
     reward.gamma = 0.99
-    
-    reward.group_safety_buffer = 0.1
-    reward.discomfort_group_dist = 0.05
-    
-    reward.grp_collision_penalty = -21
-    
-    # config for Groups
-    group = BaseConfig()
-    group.num_groups = 2
-     
-    group.min_size = 3 
-    group.max_size = 4
-    
-    group.min_distance = 2.0    
-    
-    group.min_radius = 1.0
-    group.max_radius = 1.3
-    
-    group.dynamic = False
-    group.ground_truth = True
-    
-    group.avoid_action = False
-     
+
     # config for simulation
     sim = BaseConfig()
     sim.circle_radius = 6 * np.sqrt(2)
@@ -89,7 +67,6 @@ class Config(object):
     humans = BaseConfig()
     humans.visible = True
     # orca or social_force for now
-    # hybrid_orca_social_force
     humans.policy = "orca"
     humans.radius = 0.3
     humans.v_pref = 1
@@ -121,7 +98,6 @@ class Config(object):
     # whether robot is visible to humans (whether humans respond to the robot's motion)
     robot.visible = False
     # For baseline: srnn; our method: selfAttn_merge_srnn
-    # robot.policy = 'selfAttn_merge_srnn'
     robot.policy = 'selfAttn_merge_srnn'
     robot.radius = 0.3
     robot.v_pref = 1

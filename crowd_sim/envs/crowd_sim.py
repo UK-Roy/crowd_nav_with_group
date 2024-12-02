@@ -287,7 +287,7 @@ class CrowdSim(gym.Env):
         for i, group in enumerate(self.grp):
             if i == group_near_goal:
                 # Place this group near the goal position
-                fraction = 0.8  # Distance factor from robot to goal
+                fraction = 0.7  # Distance factor from robot to goal
                 base_x = self.robot.px + fraction * (self.robot.gx - self.robot.px)
                 base_y = self.robot.py + fraction * (self.robot.gy - self.robot.py)
                 group.set_centroid(base_x, base_y)

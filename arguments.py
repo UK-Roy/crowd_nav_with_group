@@ -8,7 +8,7 @@ def get_args():
 
     # the saving directory for train.py
     parser.add_argument(
-        '--output_dir', type=str, default='trained_models/my_model')
+        '--output_dir', type=str, default='trained_models/my_model_group_attention')
 
     # resume training from an existing checkpoint or not
     parser.add_argument(
@@ -41,7 +41,7 @@ def get_args():
     parser.add_argument(
         '--no-cuda',
         action='store_true',
-        default=True,
+        default=False,
         help='disables CUDA training')
     parser.add_argument(
         '--seed', type=int, default=425, help='random seed (default: 1)')
@@ -176,10 +176,16 @@ def get_args():
                         help='Embedding size of node features')
     parser.add_argument('--human_human_edge_embedding_size', type=int, default=64,
                         help='Embedding size of edge features')
+    parser.add_argument('--group_node_embedding_size', type=int, default=64,
+                        help='Group Feature Embedding size of node features')
 
     # Attention vector dimension
     parser.add_argument('--attention_size', type=int, default=64,
                         help='Attention size')
+    
+    # Group Attention vector dimension
+    parser.add_argument('--group_attention_size', type=int, default=64,
+                        help='Group Attention size')
 
     # Sequence length
     parser.add_argument('--seq_length', type=int, default=30,

@@ -42,21 +42,38 @@ class CrowdSimPredRealGST(CrowdSimPred):
 
         # predictions only include mu_x, mu_y (or px, py)
         self.spatial_edge_dim = int(2*(self.predict_steps+1))
+        self.velocity_edge_dim = 2
+        self.direction_consistency_dim = 1
 
         d['spatial_edges'] = gym.spaces.Box(low=-np.inf, high=np.inf,
                             shape=(self.config.sim.human_num + self.config.sim.human_num_range, self.spatial_edge_dim),
                             dtype=np.float32)
+        d['velocity_edges'] = gym.spaces.Box(low=-np.inf, high=np.inf,
+                            shape=(self.config.sim.human_num + self.config.sim.human_num_range, self.velocity_edge_dim),
+                            dtype=np.float32)
 
+        d['direction_consistency'] = gym.spaces.Box(low=-np.inf, high=np.inf,
+                            shape=(self.config.sim.human_num + self.config.sim.human_num_range, ),
+                            dtype=np.float32)
         # masks for gst pred model
         # whether each human is visible to robot (ordered by human ID, should not be sorted)
         d['visible_masks'] = gym.spaces.Box(low=-np.inf, high=np.inf,
                                             shape=(self.config.sim.human_num + self.config.sim.human_num_range,),
                                             dtype=bool)
 
+        # is grp detected of not
+        d['grp'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=bool)
+        
         # number of humans detected at each timestep
         d['detected_human_num'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
 
+        # Group Observations
+        d['clusters'] = gym.spaces.Box(low=-1, high=np.inf, shape=(self.config.sim.human_num,), dtype=np.int32)
+        d['group_centroids'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_groups, 2), dtype=np.float32)
+        d['group_radii'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_groups,), dtype=np.float32)
+        
         self.observation_space = gym.spaces.Dict(d)
+
 
         high = np.inf * np.ones([2, ])
         self.action_space = gym.spaces.Box(-high, high, dtype=np.float32)
@@ -95,11 +112,13 @@ class CrowdSimPredRealGST(CrowdSimPred):
         ob['group_members'] = parent_ob['group_members']
         
         # Identify detected groups and calculate their positions
-        detected_groups = parent_ob.get('group_members', {})
+        # detected_groups = parent_ob.get('group_members', {})
         
-        if detected_groups:
-            ob['group_centroids'] = parent_ob['group_centroids']
-            ob['group_radii'] = parent_ob['group_radii']
+        # if detected_groups:
+        ob['group_centroids'] = parent_ob['group_centroids']
+        ob['group_radii'] = parent_ob['group_radii']
+        ob['grp'] = parent_ob['grp']
+        
 
         ob['detected_human_num'] = parent_ob['detected_human_num']
 

@@ -162,7 +162,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
 
             # Obser reward and next obs
             obs, rew, done, infos = eval_envs.step(action)
-            grp_obs = obs.pop('grp')
+            # grp_obs = obs.pop('grp')
 
             # record the info for calculating testing metrics
             rewards.append(rew)

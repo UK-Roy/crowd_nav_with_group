@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 from crowd_sim.envs.utils.action import ActionRot, ActionXY
 from crowd_sim.envs import *
+from crowd_sim.envs.utils.utils import *
 from crowd_sim.envs.utils.info import *
 from crowd_sim.envs.utils.human import Human
 from crowd_sim.envs.utils.group import Group
@@ -254,8 +255,11 @@ class CrowdSimVarNum(CrowdSim):
         # Initialize spatial, velocity, and direction consistency arrays
         all_spatial_edges = np.ones((self.max_human_num, 2)) * np.inf  # [relative_px, relative_py]
         all_velocity_edges = np.ones((self.max_human_num, 2)) * np.inf  # [relative_vx, relative_vy]
-        direction_consistency_edges = np.ones((self.max_human_num, 1)) * np.inf  # Direction consistency score
+        direction_consistency_edges = np.ones((self.max_human_num, )) * np.inf  # Direction consistency score
 
+        grp_centroids = np.ones((self.num_groups, 2)) * np.inf  # [relative_vx, relative_vy]
+        grp_radii = np.ones((self.num_groups,)) * np.inf  # Direction consistency score
+        
         # Collect positions, velocities, and IDs of visible humans for clustering
         visible_positions = []
         visible_velocities = []
@@ -377,16 +381,16 @@ class CrowdSimVarNum(CrowdSim):
             # print(f"Groups: {ob['group_members']}\n")
             
             # My code Ended
-            ob['group_members'] = cluster_dict           
-            ob['clusters'] = np.array([])  # No clusters if no humans are visible
             
+            ob['clusters'] = np.array([])  # No clusters if no humans are visible
+            ob['group_members'] = cluster_dict           
             # print(cluster_dict)
             
         else:
             ob['clusters'] = np.array([])  # No clusters if no humans are visible
             ob['group_members'] = {}  # No group members detected
 
-        
+        ob['clusters'] = update_cluster(self.max_human_num, cluster_dict) 
         # print(f"Groups: {ob['group_members']}\n")
        
         # Store other observation data
@@ -404,6 +408,8 @@ class CrowdSimVarNum(CrowdSim):
             ob['visible_masks'][:self.human_num] = self.human_visibility
 
         ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
+        ob['velocity_edges'][np.isinf(ob['velocity_edges'])] = 15
+        ob['direction_consistency'][np.isinf(ob['direction_consistency'])] = 15
         ob['detected_human_num'] = num_visibles
         if ob['detected_human_num'] == 0:
             ob['detected_human_num'] = 1
@@ -411,12 +417,14 @@ class CrowdSimVarNum(CrowdSim):
         # Update self.observed_human_ids
         self.observed_human_ids = np.where(self.human_visibility)[0]
 
+        ob['grp'] = False
         self.ob = ob
         
         # Identify detected groups and calculate their positions
         detected_groups = self.ob.get('group_members', {})
         
         if detected_groups:
+            grp_detected = True
             self.group_centroids = []  # To store group centroids
             self.group_radii = []      # To store group safety radii
 
@@ -427,15 +435,27 @@ class CrowdSimVarNum(CrowdSim):
                 # Calculate the centroid of the group
                 centroid = np.mean(group_positions, axis=0)
                 self.group_centroids.append(centroid)
+                
+                grp_centroids[group_id, 0] = centroid[0]
+                grp_centroids[group_id, 1] = centroid[1]
 
                 # Calculate the group's bounding radius (or convex hull radius)
                 max_distance = np.max(np.linalg.norm(group_positions - centroid, axis=1))
-                self.group_radii.append(max_distance + self.group_safety_buffer)  # Add safety buffer
+                radii = max_distance + self.group_safety_buffer
+                self.group_radii.append(radii)  # Add safety buffer
+                grp_radii[group_id] = radii 
 
-            ob['group_centroids'] = self.group_centroids
-            ob['group_radii'] = self.group_radii
+            ob['grp'] = grp_detected
+            # ob['group_centroids'] = self.group_centroids
+            # ob['group_radii'] = self.group_radii
+        
              
-            self.ob = ob
+        ob['group_centroids'] = grp_centroids
+        ob['group_radii'] = grp_radii
+
+        ob['group_centroids'][np.isinf(ob['group_centroids'])] = 15
+        ob['group_radii'][np.isinf(ob['group_radii'])] = 15
+        self.ob = ob
 
         return ob
 

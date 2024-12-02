@@ -155,6 +155,6 @@ def inference(loader, model, args, mode='val', tau=1., device='cuda:0'):
 if __name__ == "__main__":
     # args = arg_parse()
     # main(args)
-    from crowd_nav.configs.config import Config
+    from crowd_nav.configs.oldconfig import Config
     config = Config()
     main(config.pred)

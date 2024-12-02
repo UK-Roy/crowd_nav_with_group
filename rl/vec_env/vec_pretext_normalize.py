@@ -178,20 +178,41 @@ class VecPretextNormalize(VecEnvWrapper):
             O['spatial_edges'][i] = O['spatial_edges'][i][sorted_idx[i]]
         
         # Group Keys added
+        # grp_detected = False
         grp = {}
         grp_key = ['velocity_edges','direction_consistency', 'clusters', 'group_members', 'group_centroids', 'group_radii']
         for key,val in O.items():
             if key in grp_key:
+                # grp_detected = True
                 grp[key] = val
 
+        # if grp_detected:
         obs={'robot_node':O['robot_node'],
             'spatial_edges':O['spatial_edges'],
+            'velocity_edges':O['velocity_edges'],
+            'direction_consistency':O['direction_consistency'],
             'temporal_edges':O['temporal_edges'],
             'visible_masks':O['visible_masks'],
             'detected_human_num': O['detected_human_num'],
-            'grp': grp 
-
+            'clusters': O['clusters'],
+            'group_centroids': O['group_centroids'],
+            'group_radii': O['group_radii'],
+            'grp': O['grp'],
         }
+
+        # else:
+        #     obs={'robot_node':O['robot_node'],
+        #         'spatial_edges':O['spatial_edges'],
+        #         'velocity_edges':O['velocity_edges'],
+        #         'direction_consistency':O['direction_consistency'],
+        #         'temporal_edges':O['temporal_edges'],
+        #         'visible_masks':O['visible_masks'],
+        #         'detected_human_num': O['detected_human_num'], 
+        #         'clusters': O['clusters'],
+        #         'group_centroids': O['group_centroids'],
+        #         'group_radii': O['group_radii'],
+        #         'grp': grp_detected, 
+        #     }
 
         self.last_pos = copy.deepcopy(human_pos)
         self.step_counter = self.step_counter + 1

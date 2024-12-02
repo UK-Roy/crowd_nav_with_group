@@ -135,7 +135,8 @@ class Group:
                 collision = False
                 for i, agent in enumerate([robot] + humans):
                     
-                    if np.linalg.norm((px - agent.px, py - agent.py)) < min_distance:
+                    if np.linalg.norm((px - agent.px, py - agent.py)) < min_distance or \
+                        np.linalg.norm((px - agent.gx, py - agent.gy)) < min_distance:
                         collision = True
                         # Apply random offset to try a new position (e.g., small shift within radius)
                         px += np.random.uniform(-0.2, 0.2)
