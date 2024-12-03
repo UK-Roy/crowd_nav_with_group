@@ -12,10 +12,10 @@ def get_args():
 
     # resume training from an existing checkpoint or not
     parser.add_argument(
-        '--resume', default=False, action='store_true')
+        '--resume', default=True, action='store_true')
     # if resume = True, load from the following checkpoint
     parser.add_argument(
-        '--load-path', default='trained_models/GST_predictor_non_rand/checkpoints/41200.pt',
+        '--load_path', default='trained_models/my_model_group_attention/checkpoints/41665.pt',
         help='path of weights for resume training')
     parser.add_argument(
         '--overwrite',

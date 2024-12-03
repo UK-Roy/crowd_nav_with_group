@@ -29,6 +29,16 @@ class GroupAttention_M(nn.Module):
         - group_embeddings: Group features (seq_len, nenv, num_groups, group_dim)
         """
         seq_len, nenv, num_groups, group_dim = group_embeddings.shape
+        
+        # Check for no groups detected
+        if num_groups == 0:
+            # if infer_phase:
+            # Create dummy group embeddings for inference
+            dummy_group_embedding = torch.zeros(
+                (seq_len, nenv, 1, self.group_embed_dim), device=robot_states.device, dtype=robot_states.dtype
+            )
+            group_embeddings = dummy_group_embedding
+            num_groups = 1  # Update number of groups to 1
 
         # Embed robot state
         robot_embed = self.robot_embedding_layer(robot_states)  # (seq_len, nenv, robot_embed_dim)

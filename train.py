@@ -105,7 +105,7 @@ def main():
 
 	# continue training from an existing model if resume = True
 	if algo_args.resume:
-		load_path = config.training.load_path
+		load_path = algo_args.load_path
 		actor_critic.load_state_dict(torch.load(load_path))
 		print("Loaded the following checkpoint:", load_path)
 

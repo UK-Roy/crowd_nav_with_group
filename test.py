@@ -22,9 +22,9 @@ def main():
 	parser = argparse.ArgumentParser('Parse configuration file')
 	# the model directory that we are testing
 	# parser.add_argument('--model_dir', type=str, default='trained_models/GST_predictor_rand')
-	parser.add_argument('--model_dir', type=str, default='trained_models/my_model_group')
+	parser.add_argument('--model_dir', type=str, default='trained_models/my_model_group_attention')
 	# render the environment or not
-	parser.add_argument('--visualize', default=True, action='store_true')
+	parser.add_argument('--visualize', default=False, action='store_true')
 	# if -1, it will run 500 different cases; if >=0, it will run the specified test case repeatedly
 	parser.add_argument('--test_case', type=int, default=-1)
 	# model weight file you want to test
@@ -33,7 +33,7 @@ def main():
 	# whether to save trajectories of episodes
 	parser.add_argument('--render_traj', default=True, action='store_true')
 	# whether to save slide show of episodes
-	parser.add_argument('--save_slides', default=True, action='store_true')
+	parser.add_argument('--save_slides', default=False, action='store_true')
 	# Benchmarking
 	parser.add_argument('--benchmarking', default=False, action='store_true')
 	test_args = parser.parse_args()
