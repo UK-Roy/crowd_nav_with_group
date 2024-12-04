@@ -124,6 +124,7 @@ class CrowdSim(gym.Env):
         self.group_safety_buffer = config.reward.group_safety_buffer
         self.discomfort_group_dist = config.reward.discomfort_group_dist
         self.grp_collision_penalty = config.reward.grp_collision_penalty
+        self.discomfort_grp_penalty_factor = config.reward.discomfort_grp_penalty_factor
 
         # Group Configuration
         self.num_groups = config.group.num_groups 

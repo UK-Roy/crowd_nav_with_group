@@ -696,9 +696,11 @@ class CrowdSimVarNum(CrowdSim):
             goal_radius = self.robot.radius
         reaching_goal = norm(
             np.array(self.robot.get_position()) - np.array(self.robot.get_goal_position())) < goal_radius
+        
 
         # use danger_zone to determine the condition for Danger
         if danger_zone == 'circle' or self.phase == 'train':
+            danger_cond_grp = dmingrp < self.discomfort_group_dist
             danger_cond = dmin < self.discomfort_dist
             min_danger_dist = 0
         else:
@@ -731,6 +733,14 @@ class CrowdSimVarNum(CrowdSim):
             reward = self.success_reward
             done = True
             episode_info = ReachGoal()
+        
+        elif danger_cond_grp:
+            # only penalize agent for getting too close to grp if it's visible
+            # adjust the reward based on FPS
+            # print(dmin)
+            reward = (dmingrp - self.discomfort_group_dist) * self.discomfort_grp_penalty_factor * self.time_step
+            done = False
+            episode_info = Danger(min_danger_dist)
 
         elif danger_cond:
             # only penalize agent for getting too close if it's visible
