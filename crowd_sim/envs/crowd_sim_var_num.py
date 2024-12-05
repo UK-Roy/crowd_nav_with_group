@@ -704,6 +704,8 @@ class CrowdSimVarNum(CrowdSim):
             danger_cond = dmin < self.discomfort_dist
             min_danger_dist = 0
         else:
+            if self.phase == 'test':
+                danger_cond_grp = False
             # if the robot collides with future states, give it a collision penalty
             relative_pos = self.human_future_traj[1:, :, :2] - np.array([self.robot.px, self.robot.py])
             relative_dist = np.linalg.norm(relative_pos, axis=-1)
