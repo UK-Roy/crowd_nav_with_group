@@ -24,7 +24,7 @@ def main(com, log_dir, type):
     # the model directory that we are testing
     parser.add_argument('--model_dir', type=str, default='trained_models/GST_predictor_rand')
     # render the environment or not
-    parser.add_argument('--visualize', default=True, action='store_true')
+    parser.add_argument('--visualize', default=False, action='store_true')
     # if -1, it will run 100 different cases; if >=0, it will run the specified test case repeatedly
     parser.add_argument('--test_case', type=int, default=-1)
     # model weight file you want to test
@@ -37,6 +37,11 @@ def main(com, log_dir, type):
     if test_args.save_slides:
         test_args.visualize = True
 
+    if "model_dir" in com:
+        test_args.model_dir = com["model_dir"]
+    if "test_model" in com:
+        test_args.test_model = com["test_model"]
+        
     from importlib import import_module
     model_dir_temp = test_args.model_dir
     if model_dir_temp.endswith('/'):
@@ -67,12 +72,13 @@ def main(com, log_dir, type):
     env_config = config = Config()
 
     for key, val in com.items():
-        for k, v in val.items():
-            setattr(getattr(config, key), k, v)
+        if isinstance(val, dict):
+            for k, v in val.items():
+                setattr(getattr(config, key), k, v)
             
     # configure logging and device
     # print test result in log file
-    if "avoid" in type:
+    if "avoid" in type and config.robot.policy != "selfAttn_merge_srnn_grpAttn":
         env_config.group.avoid_action = True
         
     log_dir = os.path.join(log_dir,type)
@@ -177,4 +183,4 @@ if __name__ == '__main__':
     
     for com in config_data["combinations"]:
         com.pop("combination") 
-        main(com, log_dir=f'benchmark_results', type=f'static')
+        main(com, log_dir=f'benchmark_results', type=f'static-avoid')

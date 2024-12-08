@@ -83,14 +83,24 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             if not done:
                 global_time = baseEnv.global_time
            
-            if group_avoid_action: 
+            if group_avoid_action:
+                if obs['grp']:
+                    group_list = obs['clusters'][0]
+                    group_dict = {}
+                    for idx, group_id in enumerate(group_list):
+                        if group_id != -1:  # Ignore -1 values
+                            group_dict.setdefault(group_id, []).append(idx)
+                    grp_obs = {'group_members': group_dict,
+                               'group_centroids': obs['group_centroids'],
+                               'group_radii': obs['group_radii']}
+                     
                 if grp_obs:
                     # Identify detected groups and calculate their positions
                     detected_groups = grp_obs.get('group_members', {})
 
                     if detected_groups:
-                        group_centroids = grp_obs['group_centroids']
-                        group_radii = grp_obs['group_radii']
+                        group_centroids = grp_obs['group_centroids'][0]
+                        group_radii = grp_obs['group_radii'][0]
 
                         # Robot's current position and goal position
                         robot_position = torch.tensor([obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
@@ -106,8 +116,10 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                             distance_robot_to_goal = torch.norm(robot_to_goal)
                             distance_centroid_to_goal = torch.norm(centroid - goal_position)
 
-                            robot_to_goal = robot_to_goal.type(torch.float64)
+                            robot_to_goal = robot_to_goal
+                            
                             robot_to_group = centroid - robot_position
+                            # robot_to_group = robot_to_group.type(torch.float64)
                         
                             if distance_robot_to_goal < distance_centroid_to_goal and distance_robot_to_goal < goal_threshold:
                                 break  # Stop avoiding the group, focus on the goal
@@ -249,7 +261,8 @@ def cal_vec(obs, action, centroid, device):
 
     # Intended position vector (from robot to intended position)
     intended_position = torch.tensor([obs['robot_node'][0, 0, 0] + action[0, 0] * 0.25,\
-                                    obs['robot_node'][0, 0, 1] + action[0, 1] * 0.25],dtype=torch.float64, device=device)
+                                    obs['robot_node'][0, 0, 1] + action[0, 1] * 0.25], device=device)
+                                    # obs['robot_node'][0, 0, 1] + action[0, 1] * 0.25],dtype=torch.float64, device=device)
     intended_vector = intended_position - robot_position  # Vector from robot to intended position
     # intended_vector = intended_vector.type(torch.float64)
 
@@ -275,22 +288,6 @@ def cal_vec(obs, action, centroid, device):
     # print(f"Angle between the vectors: {angle_radians.item()} radians, {angle_degrees.item()} degrees")
     return angle_radians
 
-# def find_perpendi(robot_position, centroid, device):
-
-#     # Centroid vector (from robot to group centroid)
-#     centroid_vector = centroid - robot_position
-
-#     # To rotate the vector 90 degrees, swap the x and y components and negate one of them
-#     # Rotation by +90 degrees:
-#     perpendicular_vector = torch.tensor([-centroid_vector[1], centroid_vector[0]], device=device)
-
-#     # Normalize the perpendicular vector to get a direction vector
-#     perpendicular_direction = perpendicular_vector / torch.norm(perpendicular_vector)
-
-#     # print(f"Intended position (90 degrees to centroid vector): {perpendicular_direction}")
-
-#     return perpendicular_direction
-
 def find_perpendi(robot_position, centroid, device, clockwise=True):
     centroid_vector = centroid - robot_position
     if clockwise:
@@ -306,7 +303,8 @@ def check_humans_near_goal(obs, goal_position, threshold, device):
     for i, visible in enumerate(visible_humans):
         if visible:
             human_position = torch.tensor([obs['spatial_edges'][0, i, 0], obs['spatial_edges'][0, i, 1]], device=device)
-            distance_to_goal = torch.norm(human_position.type(torch.float64) - goal_position)
+            distance_to_goal = torch.norm(human_position - goal_position)
+            # distance_to_goal = torch.norm(human_position.type(torch.float64) - goal_position)
             # print(distance_to_goal)
             if distance_to_goal < threshold:
                 return True  # Human is near the goal

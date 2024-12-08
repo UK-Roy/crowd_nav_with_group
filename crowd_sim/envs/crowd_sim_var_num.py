@@ -446,6 +446,8 @@ class CrowdSimVarNum(CrowdSim):
                 grp_radii[group_id] = radii 
 
             ob['grp'] = grp_detected
+            # if ob['grp']:
+            #     ob['group_members'] = detected_groups
             # ob['group_centroids'] = self.group_centroids
             # ob['group_radii'] = self.group_radii
         

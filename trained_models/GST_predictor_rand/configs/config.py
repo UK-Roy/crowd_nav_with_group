@@ -36,7 +36,8 @@ class Config(object):
     reward.gamma = 0.99
     
     reward.group_safety_buffer = 0.1
-    reward.discomfort_group_dist = 0.05
+    reward.discomfort_group_dist = 0.07 #0.05
+    reward.discomfort_grp_penalty_factor = 12
     
     reward.grp_collision_penalty = -21
     
@@ -45,7 +46,7 @@ class Config(object):
     group.num_groups = 2
      
     group.min_size = 3 
-    group.max_size = 4
+    group.max_size = 5
     
     group.min_distance = 2.0    
     

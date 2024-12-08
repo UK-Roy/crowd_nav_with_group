@@ -121,9 +121,9 @@ class Config(object):
     robot = BaseConfig()
     # whether robot is visible to humans (whether humans respond to the robot's motion)
     robot.visible = False
-    # For baseline: srnn; our method: selfAttn_merge_srnn
-    # robot.policy = 'selfAttn_merge_srnn'
-    robot.policy = 'selfAttn_merge_srnn'
+    # For baseline: srnn; another method: selfAttn_merge_srnn
+    # our method robot.policy = 'selfAttn_merge_srnn'
+    robot.policy = 'srnn'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"

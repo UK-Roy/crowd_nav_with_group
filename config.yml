@@ -10,3 +10,15 @@ combinations:
   - combination: 3
     robot:
       policy: "selfAttn_merge_srnn"
+  
+  # - combination: 4
+  #   robot:
+  #     policy: "srnn"
+  #   model_dir: "trained_models/srnn"
+  #   test_model: "20800.pt"
+  
+  # - combination: 5
+  #   robot:
+  #     policy: "selfAttn_merge_srnn_grpAttn"
+  #   model_dir: "trained_models/my_model_group_attention_final"
+  #   test_model: "20800.pt"

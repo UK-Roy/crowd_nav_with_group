@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from rl.networks.distributions import Bernoulli, Categorical, DiagGaussian
 from .srnn_model import SRNN
+from .selfAttn_srnn_temp_node_groupAttn import selfAttn_merge_SRNN_GrpAttn
 from .selfAttn_srnn_temp_node import selfAttn_merge_SRNN
 
 class Flatten(nn.Module):
@@ -22,6 +23,8 @@ class Policy(nn.Module):
             base=SRNN
         elif base == 'selfAttn_merge_srnn':
             base = selfAttn_merge_SRNN
+        elif base == 'selfAttn_merge_srnn_grpAttn':
+            base = selfAttn_merge_SRNN_GrpAttn
         else:
             raise NotImplementedError
 
