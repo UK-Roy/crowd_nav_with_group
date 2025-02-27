@@ -1,23 +1,21 @@
+<!---
 # CrowdNav++
 This repository contains the codes for our paper titled "Intention Aware Robot Crowd Navigation with Attention-Based Interaction Graph" in ICRA 2023. 
 For more details, please refer to the [project website](https://sites.google.com/view/intention-aware-crowdnav/home) and [arXiv preprint](https://arxiv.org/abs/2203.01821).
 For experiment demonstrations, please refer to the [youtube video](https://www.youtube.com/watch?v=nxpxhF019VA).
+-->
 
 **[News]**
-- Please check out our open-sourced sim2real tutorial [here](https://github.com/Shuijing725/CrowdNav_Sim2Real_Turtlebot)
-- Please check out my curated paper list for robot social navigation [here](https://github.com/Shuijing725/awesome-robot-social-navigation) (It is under active development) 
+- We are working on to publish a conference paper, aiming at the IROS 2025.
 
 ## Abstract
-We study the problem of safe and intention-aware robot navigation in dense and interactive crowds. 
-Most previous reinforcement learning (RL) based methods fail to consider different types of interactions among all agents or ignore the intentions of people, which results in performance degradation. 
-In this paper, we propose a novel recurrent graph neural network with attention mechanisms to capture heterogeneous interactions among agents through space and time. 
-To encourage longsighted robot behaviors, we infer the intentions of dynamic agents by predicting their future trajectories for several timesteps. 
-The predictions are incorporated into a model-free RL framework to prevent the robot from intruding into the intended paths of other agents. 
-We demonstrate that our method enables the robot to achieve good navigation performance and non-invasiveness in challenging crowd navigation scenarios. We successfully transfer the policy learned in simulation to a real-world TurtleBot 2i.
+This study addresses the critical challenge of enabling robots to navigate effectively and safely in crowded environments by integrating group dynamics into robot navigation systems. A novel Group-Responsive Attention Mechanism (GRAM) is proposed to model and respond to human groups in dynamic crowds, leveraging reinforcement learning for adaptive behavior. The research begins with the development of a reactive group avoidance method based on tangent actions, which, while reducing group avoidance rates, showed limitations in success rates and increased collision risks. To overcome these challenges, GRAM incorporates attention-based interaction modeling, balancing individual and group interactions through dynamically learned attention weights. The environment was benchmarked using diverse human group formations, including line, circular, grid, and V-shaped groups, and evaluated on key metrics such as success rate, group avoidance rate, collision rate, navigation time, and path length. Experimental results demonstrate that GRAM significantly improves navigation success rates and reduces collision rates compared to baseline methods, with further optimization through advanced reward functions addressing proximity and group dynamics. This work not only highlights the importance of incorporating group-aware mechanisms in crowd navigation but also sets the stage for future research in enhancing robot adaptability to complex human behaviors, particularly in real-world settings with dynamic and interactive crowds.
 
+<!---
 <p align="center">
 <img src="/figures/open.png" width="450" />
 </p>
+-->
 
 ## Setup
 1. In a conda environment or virtual environment with Python 3.x, install the required python package
@@ -103,7 +101,7 @@ python plot.py
 Here are example learning curves of our proposed network model with GST predictor.
 
 <img src="/figures/rewards.png" width="370" /> <img src="/figures/losses.png" width="370" />
-
+<!---
 ## Sim2Real
 We are happy to announce that our sim2real tutorial and code are released [here](https://github.com/Shuijing725/CrowdNav_Sim2Real_Turtlebot)!  
 **Note:** This repo only serves as a reference point for the sim2real transfer of crowd navigation. Since there are lots of uncertainties in real-world experiments that may affect performance, we cannot guarantee that it is reproducible on all cases. 
@@ -145,7 +143,8 @@ Part of the code is based on the following repositories:
 
 [1] S. Liu, P. Chang, W. Liang, N. Chakraborty, and K. Driggs-Campbell, "Decentralized Structural-RNN for Robot Crowd Navigation with Deep Reinforcement Learning," in IEEE International Conference on Robotics and Automation (ICRA), 2019, pp. 3517-3524. (Github: https://github.com/Shuijing725/CrowdNav_DSRNN)  
 
-[2] Z. Huang, R. Li, K. Shin, and K. Driggs-Campbell. "Learning Sparse Interaction Graphs of Partially Detected Pedestrians for Trajectory Prediction," in IEEE Robotics and Automation Letters, vol. 7, no. 2, pp. 1198–1205, 2022. (Github: https://github.com/tedhuang96/gst)  
+[2] Z. Huang, R. Li, K. Shin, and K. Driggs-Campbell. "Learning Sparse Interaction Graphs of Partially Detected Pedestrians for Trajectory Prediction," in IEEE Robotics and Automation Letters, vol. 7, no. 2, pp. 1198–1205, 2022. (Github: https://github.com/tedhuang96/gst)
+-->
 
 ## Contact
 If you have any questions or find any bugs, please feel free to open an issue or pull request.
