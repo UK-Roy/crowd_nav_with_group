@@ -3,4 +3,6 @@ pandas==2.0.3
 gym==0.15.7
 tensorflow-gpu==2.11.0
 matplotlib==3.7.5
+scikit-learn
+scipy
 Cython

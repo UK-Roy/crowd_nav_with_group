@@ -4,7 +4,7 @@ from numpy.linalg import norm
 import copy
 from sklearn.cluster import DBSCAN
 from scipy.sparse import csr_matrix
-import networkx as nx
+# import networkx as nx
 import matplotlib.pyplot as plt
 
 from crowd_sim.envs.utils.action import ActionRot, ActionXY
