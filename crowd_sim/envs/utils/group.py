@@ -123,7 +123,11 @@ class Group:
         # Generate positions based on the selected formation
         positions = self.select_formation()
         # positions = self.grid_formation()
-        
+        points_np = np.array(positions)
+        mean_point = points_np.mean(axis=0)
+        gx = -mean_point[0]  # Goal x-coordinate
+        gy = -mean_point[1]  # Goal y-coordinate
+
         # Adjust positions if necessary to avoid collisions
         # adjusted_positions = []
         for pos, mem in zip(positions, self.members):

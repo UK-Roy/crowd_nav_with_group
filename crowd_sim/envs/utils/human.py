@@ -19,7 +19,7 @@ class Human(Agent):
         self.group_id = group_id
 
     # ob: a list of observable states
-    def act(self, ob):
+    def act(self, ob, members=None):
         """
         The state for human is its full state and all other agents' observable states
         :param ob:
@@ -30,8 +30,15 @@ class Human(Agent):
 
         if self.isObstacle is True:
             return ActionXY(0, 0)
+        
+        # Edited by me
+        # if self.group_id is not None:
+        #     return self.grp_policy.predict(state)
 
         action = self.policy.predict(state)
+
+        if self.group_id is not None:
+            action = self.grp_policy.predict(state, action, members)
 
         # Check if the human is part of a group (Edited)
         # if self.group_id is not None:
@@ -44,7 +51,6 @@ class Human(Agent):
         # else:
         #     # Act individually
         #     action = self.policy.predict(state)
-
         return action
 
     # ob: a joint state (ego agent's full state + other agents' observable states)

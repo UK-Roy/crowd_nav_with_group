@@ -20,7 +20,10 @@ class Agent(object):
         # randomize neighbor_dist of ORCA
         if config.env.randomize_attributes:
             config.orca.neighbor_dist = np.random.uniform(5, 10)
+        
         self.policy = policy_factory[subconfig.policy](config)
+        if section == 'humans':
+            self.grp_policy = policy_factory['hybrid_orca_flocking'](config)
         self.sensor = subconfig.sensor
         self.FOV = np.pi * subconfig.FOV
         # for humans: we only have holonomic kinematics; for robot: depend on config
@@ -57,7 +60,7 @@ class Agent(object):
         self.vx = vx
         self.vy = vy
         self.theta = theta
-
+        
         if radius is not None:
             self.radius = radius
         if v_pref is not None:
@@ -95,7 +98,7 @@ class Agent(object):
             next_theta = self.theta + action.r
             next_vx = action.v * np.cos(next_theta)
             next_vy = action.v * np.sin(next_theta)
-        return ObservableState(next_px, next_py, next_vx, next_vy, self.radius, self.group_id)
+        return ObservableState(next_px, next_py, next_vx, next_vy, self.radius)
 
     def get_full_state(self):
         return FullState(self.px, self.py, self.vx, self.vy, self.radius, self.gx, self.gy, self.v_pref, self.theta)

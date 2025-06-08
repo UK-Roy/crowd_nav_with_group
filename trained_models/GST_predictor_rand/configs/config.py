@@ -53,7 +53,7 @@ class Config(object):
     group.min_radius = 1.0
     group.max_radius = 1.3
     
-    group.dynamic = False
+    group.dynamic = True
     group.ground_truth = True
     
     group.avoid_action = False
@@ -91,6 +91,7 @@ class Config(object):
     humans.visible = True
     # orca or social_force for now
     # hybrid_orca_social_force
+    # humans.policy = "hybrid_orca_flocking"
     humans.policy = "orca"
     humans.radius = 0.3
     humans.v_pref = 1

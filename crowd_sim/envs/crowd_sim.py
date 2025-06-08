@@ -4,6 +4,7 @@ import numpy as np
 import rvo2
 import random
 import copy
+from collections import defaultdict
 
 from numpy.linalg import norm
 from crowd_sim.envs.utils.human import Human
@@ -805,8 +806,15 @@ class CrowdSim(gym.Env):
         # step all humans
         human_actions = []  # a list of all humans' actions
 
+        # Initialize the dictionary
+        group_to_member_ids = defaultdict(list)
+
         for i, human in enumerate(self.humans):
             # observation for humans is always coordinates
+            if human.group_id is not None:
+                group_to_member_ids[human.group_id].append(human)
+            
+        for i, human in enumerate(self.humans):
             ob = []
             for other_human in self.humans:
                 if other_human != human:
@@ -822,24 +830,28 @@ class CrowdSim(gym.Env):
                 else:
                     ob += [self.dummy_robot.get_observable_state()]
             
-            if human.group_id is None:
-                human_actions.append(human.act(ob))
+            if human.group_id is not None: 
+                human_actions.append(human.act(ob, group_to_member_ids[human.group_id]))
             else:
-                if human.group_id in self.leader:
-                    if human == self.leader[human.group_id]:
-                        action = human.act(ob)
-                        self.leader_act[human.group_id] = action
-                    else:
-                        # if not human.isObstacle:
-                            # action = human.follow_leader_avoid_other(ob, self.leader[human.group_id])
-                        action = self.leader_act[human.group_id]
+                human_actions.append(human.act(ob))
+            # if human.group_id is None:
+            #     human_actions.append(human.act(ob))
+            # else:
+            #     if human.group_id in self.leader:
+            #         if human == self.leader[human.group_id]:
+            #             action = human.act(ob)
+            #             self.leader_act[human.group_id] = action
+            #         else:
+            #             # if not human.isObstacle:
+            #                 # action = human.follow_leader_avoid_other(ob, self.leader[human.group_id])
+            #             action = self.leader_act[human.group_id]
 
-                else:
-                    self.leader[human.group_id] = human
-                    action = human.act(ob)
-                    self.leader_act[human.group_id] = action
+            #     else:
+            #         self.leader[human.group_id] = human
+            #         action = human.act(ob)
+            #         self.leader_act[human.group_id] = action
                 
-                human_actions.append(action)
+            #     human_actions.append(action)
 
         return human_actions
 
