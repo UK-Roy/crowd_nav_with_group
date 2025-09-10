@@ -46,7 +46,7 @@ class Config(object):
     group.num_groups = 2
      
     group.min_size = 3 
-    group.max_size = 5
+    group.max_size = 4
     
     group.min_distance = 2.0    
     
@@ -124,7 +124,7 @@ class Config(object):
     robot.visible = False
     # For baseline: srnn; our method: selfAttn_merge_srnn
     # robot.policy = 'selfAttn_merge_srnn'
-    robot.policy = 'selfAttn_merge_srnn'
+    robot.policy = 'social_force'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"

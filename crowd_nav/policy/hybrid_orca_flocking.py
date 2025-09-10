@@ -12,7 +12,7 @@ class HYBRID_ORCA_FLOCKING(Policy):
         self.w_c = 0.5  # cohesion
         self.w_a = 1.0  # alignment
         self.w_s = 1.0  # separation
-        self.alpha = 0.5  # ORCA vs flocking blending
+        self.alpha = 0.6  # ORCA vs flocking blending
 
     def predict(self, state, orca_action, group_members):
         self_state = state.self_state

@@ -28,3 +28,49 @@ Evaluation using 100 episodes: mean reward 3.14451
  Evaluation using 100 episodes: mean reward 21.40889
 
 
+ 9/09/2025
+ TAGA
+ 2025-09-09 00:45:17, INFO: Testing success rate: 0.82, collision rate: 0.16, timeout rate: 0.02, group intrusion rate (GCR): 8.82%, nav time: 16.79, path length: 22.68, average intrusion ratio: 4.27%, average minimal distance during intrusions: 0.44
+2025-09-09 00:45:17, INFO: Collision cases: 0 2 7 14 30 31 38 47 50 52 57 64 80 81 88 97
+2025-09-09 00:45:17, INFO: Timeout cases: 16 66
+2025-09-09 00:45:17, INFO: Mean Reward: -133.52002434
+ Evaluation using 100 episodes: mean reward -133.52002
+
+ 2025-09-09 00:55:28, INFO: Testing success rate: 0.78, collision rate: 0.20, timeout rate: 0.02, group intrusion rate (GCR): 10.54%, nav time: 15.47, path length: 21.54, average intrusion ratio: 3.96%, average minimal distance during intrusions: 0.42
+2025-09-09 00:55:28, INFO: Collision cases: 0 2 3 7 14 17 18 30 31 47 50 52 53 57 64 67 68 80 81 97
+2025-09-09 00:55:28, INFO: Timeout cases: 34 84
+2025-09-09 00:55:28, INFO: Mean Reward: -175.87980804000003
+ Evaluation using 100 episodes: mean reward -175.87981
+
+ ORCA
+2025-09-09 01:15:56, INFO: Testing success rate: 0.59, collision rate: 0.35, timeout rate: 0.06, group intrusion rate (GCR): 7.31%, nav time: 26.78, path length: 20.23, average intrusion ratio: 0.36%, average minimal distance during intrusions: 0.47
+2025-09-09 01:15:56, INFO: Collision cases: 0 5 15 16 20 26 27 29 30 31 33 35 36 38 41 42 43 49 55 65 66 70 76 77 79 80 81 83 85 86 88 91 92 93 99
+2025-09-09 01:15:56, INFO: Timeout cases: 17 44 48 67 94 98
+2025-09-09 01:15:56, INFO: Mean Reward: -190.14580577999996
+ Evaluation using 100 episodes: mean reward -190.14581
+
+ TAGA
+2025-09-09 01:31:30, INFO: Testing success rate: 0.55, collision rate: 0.33, timeout rate: 0.12, group intrusion rate (GCR): 4.18%, nav time: 27.85, path length: 21.50, average intrusion ratio: 0.67%, average minimal distance during intrusions: 0.47
+2025-09-09 01:31:30, INFO: Collision cases: 0 4 5 8 13 17 26 27 28 30 31 32 35 36 38 42 49 54 55 58 63 67 76 77 78 80 81 82 85 86 88 92 99
+2025-09-09 01:31:30, INFO: Timeout cases: 6 16 19 29 34 48 56 66 69 79 84 98
+2025-09-09 01:31:30, INFO: Mean Reward: -64.45738920000001
+ Evaluation using 100 episodes: mean reward -64.45739
+
+ Social Force
+2025-09-09 01:44:09, INFO: Testing success rate: 0.27, collision rate: 0.55, timeout rate: 0.18, group intrusion rate (GCR): 6.28%, nav time: 29.56, path length: 21.36, average intrusion ratio: 10.87%, average minimal distance during intrusions: 0.38
+2025-09-09 01:44:09, INFO: Collision cases: 0 1 2 3 6 11 12 13 15 17 19 20 21 23 24 26 30 31 32 33 36 40 42 44 45 46 47 49 51 52 53 56 61 62 63 65 67 69 70 71 73 74 76 80 81 82 83 86 90 92 94 95 96 97 99
+2025-09-09 01:44:09, INFO: Timeout cases: 14 16 27 34 38 39 41 43 48 64 66 77 84 88 89 91 93 98
+2025-09-09 01:44:09, INFO: Mean Reward: -123.42547734
+ Evaluation using 100 episodes: mean reward -123.42548
+
+TAGA
+ 2025-09-09 01:52:28, INFO: Testing success rate: 0.29, collision rate: 0.55, timeout rate: 0.16, group intrusion rate (GCR): 4.22%, nav time: 28.80, path length: 20.76, average intrusion ratio: 11.34%, average minimal distance during intrusions: 0.39
+2025-09-09 01:52:28, INFO: Collision cases: 0 1 2 3 6 11 12 13 15 17 19 20 23 24 26 27 30 31 32 33 35 40 42 44 45 46 47 49 51 52 53 56 61 62 63 65 67 69 70 73 74 76 77 80 81 82 83 85 90 92 94 95 96 97 99
+2025-09-09 01:52:28, INFO: Timeout cases: 14 16 37 38 39 41 43 48 64 66 87 88 89 91 93 98
+2025-09-09 01:52:28, INFO: Mean Reward: -66.72165820000001
+ Evaluation using 100 episodes: mean reward -66.72166
+
+
+
+
+

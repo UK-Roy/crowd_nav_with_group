@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from crowd_sim.envs.utils.info import *
+from crowd_nav.policy.taga_safety import TAGASafetyController
 
 
 def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging, config, args, visualize=False, group_avoid_action=False):
@@ -20,7 +21,12 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
         eval_recurrent_hidden_states['human_human_edge_rnn'] = torch.zeros(num_processes, edge_num,
                                                                            actor_critic.base.human_human_edge_rnn_size,
                                                                            device=device)
-
+    # Add group intrusion tracking
+    group_intrusion_count = []
+    group_intrusion_time = []
+    total_time_in_groups = 0
+    episode_group_intrusions = 0
+     
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
     success_times = []
@@ -39,6 +45,12 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
     grp_collision_cases = []
     timeout_cases = []
 
+    # Initialize safety controller for TAGA
+    if group_avoid_action:
+        safety_controller = TAGASafetyController(config)
+        logging.info("TAGA Safety Controller initialized")
+    
+    group_intrusion_ratios = []  # Percentage of time in groups per episode 
     all_path_len = []
 
     # to make it work with the virtualenv in sim2real
@@ -63,6 +75,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
         path_len = 0.
         too_close = 0.
         last_pos = obs['robot_node'][0, 0, :2].cpu().numpy()
+        episode_group_intrusions = 0
 
         grp_obs = {}
 
@@ -84,6 +97,9 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                 global_time = baseEnv.global_time
            
             if group_avoid_action:
+                taga_action_computed = False
+                taga_action = None
+                
                 if obs['grp']:
                     group_list = obs['clusters'][0]
                     group_dict = {}
@@ -91,72 +107,66 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                         if group_id != -1:  # Ignore -1 values
                             group_dict.setdefault(group_id, []).append(idx)
                     grp_obs = {'group_members': group_dict,
-                               'group_centroids': obs['group_centroids'],
-                               'group_radii': obs['group_radii']}
-                     
+                            'group_centroids': obs['group_centroids'],
+                            'group_radii': obs['group_radii']}
+                
                 if grp_obs:
                     # Identify detected groups and calculate their positions
                     detected_groups = grp_obs.get('group_members', {})
-
+                    
                     if detected_groups:
                         group_centroids = grp_obs['group_centroids'][0]
                         group_radii = grp_obs['group_radii'][0]
-
+                        
                         # Robot's current position and goal position
                         robot_position = torch.tensor([obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
                         goal_position = torch.tensor([obs['robot_node'][0, 0, 3], obs['robot_node'][0, 0, 4]], device=device)
-
+                        
                         goal_threshold = 3  # Distance where the robot prioritizes goal over group avoidance
                         safe_margin = 0.25  # Safety margin around groups
-
+                        
                         # Now adjust the robot's velocity based on group avoidance
                         for centroid, radius in zip(group_centroids, group_radii):
                             # Calculate the vector from the robot to the goal
                             robot_to_goal = goal_position - robot_position
                             distance_robot_to_goal = torch.norm(robot_to_goal)
                             distance_centroid_to_goal = torch.norm(centroid - goal_position)
-
-                            robot_to_goal = robot_to_goal
                             
+                            robot_to_goal = robot_to_goal
                             robot_to_group = centroid - robot_position
-                            # robot_to_group = robot_to_group.type(torch.float64)
-                        
+                            
                             if distance_robot_to_goal < distance_centroid_to_goal and distance_robot_to_goal < goal_threshold:
                                 break  # Stop avoiding the group, focus on the goal
-
+                            
                             # Check if the group is between the robot and the goal
                             if torch.dot(robot_to_goal, robot_to_group) > 0:
                                 # Calculate the distance from the group to the goal path
                                 distance_to_group = torch.norm(robot_to_group)
-
+                                
                                 # If the group is too close, adjust the robot's action to avoid it
                                 if distance_to_group < radius + safe_margin:
-
                                     # Prioritize the goal if the robot is closer to the goal than the group centroid
-                                    if distance_robot_to_goal < distance_centroid_to_goal: 
+                                    if distance_robot_to_goal < distance_centroid_to_goal:
                                         break  # Focus on goal
                                     
-                                    # Adjust action based on the group location
-                                    # angle = cal_vec(obs, action, centroid, device)
-                                    # if angle < 1.56:  # Check if the group is in front of the robot
-                                    #     act = find_perpendi(robot_position, centroid, device)
-                                        # print(angle)
-                                    # Adjust action based on the group location
+                                    # Compute TAGA action
                                     clockwise_perpendicular = find_perpendi(robot_position, centroid, device, clockwise=True)
                                     anticlockwise_perpendicular = find_perpendi(robot_position, centroid, device, clockwise=False)
                                     
-                                    # Calculate the angles for both directions
                                     rad, clockwise_angle_deg = angle_between_vectors(clockwise_perpendicular, robot_to_goal)
                                     anticlockwise_angle_deg = 180 - clockwise_angle_deg
+                                    
                                     # Choose the best avoidance direction based on the smaller angle
                                     if clockwise_angle_deg < anticlockwise_angle_deg:
-                                        act = clockwise_perpendicular
+                                        taga_action = clockwise_perpendicular
                                     else:
-                                        act = anticlockwise_perpendicular
+                                        taga_action = anticlockwise_perpendicular
                                     
+                                    taga_action_computed = True
                                     
-                                    break  # Only adjust for the nearest group
-
+                                    # CRITICAL CHANGE: Apply safety layer to TAGA action
+                                    act = safety_controller.get_safe_taga_action(obs, taga_action, device)
+                                    break  # Only adjust for the nearest group 
 
             # if the vec_pretext_normalize.py wrapper is used, send the predicted traj to env
             if args.env_name == 'CrowdSimPredRealGST-v0' and config.env.use_wrapper:
@@ -185,6 +195,12 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             if isinstance(infos[0]['info'], Danger):
                 too_close = too_close + 1
                 min_dist.append(infos[0]['info'].min_dist)
+            
+            if isinstance(infos[0]['info'], GroupIntrusion):
+                if k not in group_intrusion_count:  # Note: use 'k' not 'episode_k'
+                    group_intrusion_count.append(k)
+                total_time_in_groups += 1
+                episode_group_intrusions += 1
 
             episode_rew += rew[0]
 
@@ -204,6 +220,12 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
         all_path_len.append(path_len)
         too_close_ratios.append(too_close/stepCounter*100)
 
+        if stepCounter > 0:
+            episode_intrusion_ratio = (episode_group_intrusions / stepCounter) * 100
+            group_intrusion_ratios.append(episode_intrusion_ratio)
+        else:
+            group_intrusion_ratios.append(0)
+
         if isinstance(infos[0]['info'], ReachGoal):
             success += 1
             success_times.append(global_time)
@@ -213,11 +235,11 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             collision_cases.append(k)
             collision_times.append(global_time)
             print('Collision') 
-        elif isinstance(infos[0]['info'], GroupCollision):
-            grp_collision += 1
-            grp_collision_cases.append(k)
-            grp_collision_times.append(global_time)
-            print('Group Collision')
+        # elif isinstance(infos[0]['info'], GroupCollision):
+        #     grp_collision += 1
+        #     grp_collision_cases.append(k)
+        #     grp_collision_times.append(global_time)
+        #     print('Group Collision')
         elif isinstance(infos[0]['info'], Timeout):
             timeout += 1
             timeout_cases.append(k)
@@ -227,26 +249,42 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             pass
         else:
             raise ValueError('Invalid end signal from environment')
-
     # all episodes end
     success_rate = success / test_size
     collision_rate = collision / test_size
     grp_collision_rate = grp_collision / test_size
     timeout_rate = timeout / test_size
-    assert success + collision + grp_collision + timeout == test_size
+    # assert success + collision + grp_collision + timeout == test_size
+    assert success + collision + timeout == test_size  # Remove grp_collision from sum
     avg_nav_time = sum(success_times) / len(
         success_times) if success_times else time_limit  # baseEnv.env.time_limit
+    gcr_rate = np.mean(group_intrusion_ratios) if group_intrusion_ratios else 0  # Average GCR across episodes
+
+    # Calculate GCR as a separate metric (percentage of time in groups)
+    # Calculate GCR as percentage of steps spent in groups
+    # total_steps = sum([steps for steps in stepCounter])  # Need to track all step counts
+    # gcr_rate = (total_time_in_groups / (test_size * average_steps_per_episode)) * 100 if test_size > 0 else 0
+    # total_steps = sum([len(ep) for ep in all_path_len])
+    # gcr_rate = total_time_in_groups / total_steps if total_steps > 0 else 0
 
     # logging
+    # logging.info(
+    #     'Testing success rate: {:.2f}, collision rate: {:.2f}, group collision rate: {:.2f}, timeout rate: {:.2f}, '
+    #     'nav time: {:.2f}, path length: {:.2f}, average intrusion ratio: {:.2f}%, '
+    #     'average minimal distance during intrusions: {:.2f}'.
+    #         format(success_rate, collision_rate, grp_collision_rate, timeout_rate, avg_nav_time, np.mean(all_path_len),
+    #                np.mean(too_close_ratios), np.mean(min_dist)))
     logging.info(
-        'Testing success rate: {:.2f}, collision rate: {:.2f}, group collision rate: {:.2f}, timeout rate: {:.2f}, '
-        'nav time: {:.2f}, path length: {:.2f}, average intrusion ratio: {:.2f}%, '
-        'average minimal distance during intrusions: {:.2f}'.
-            format(success_rate, collision_rate, grp_collision_rate, timeout_rate, avg_nav_time, np.mean(all_path_len),
-                   np.mean(too_close_ratios), np.mean(min_dist)))
+    'Testing success rate: {:.2f}, collision rate: {:.2f}, timeout rate: {:.2f}, '
+    'group intrusion rate (GCR): {:.2f}%, '  # Now a percentage, not part of the sum
+    'nav time: {:.2f}, path length: {:.2f}, average intrusion ratio: {:.2f}%, '
+    'average minimal distance during intrusions: {:.2f}'.
+    format(success_rate, collision_rate, timeout_rate, gcr_rate,  # GCR as percentage
+           avg_nav_time, np.mean(all_path_len),
+           np.mean(too_close_ratios), np.mean(min_dist)))
 
     logging.info('Collision cases: ' + ' '.join([str(x) for x in collision_cases]))
-    logging.info('Group Collision cases: ' + ' '.join([str(x) for x in grp_collision_cases]))
+    # logging.info('Group Collision cases: ' + ' '.join([str(x) for x in grp_collision_cases]))
     logging.info('Timeout cases: ' + ' '.join([str(x) for x in timeout_cases]))
     logging.info(f'Mean Reward: {np.mean(eval_episode_rewards)}' )
     print(" Evaluation using {} episodes: mean reward {:.5f}\n".format(

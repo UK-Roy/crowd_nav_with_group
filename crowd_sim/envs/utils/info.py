@@ -37,6 +37,13 @@ class GroupCollision(object):
     def __str__(self):
         return 'Group Collision'
 
+class GroupIntrusion(object):
+    def __init__(self, min_dist):
+        self.min_dist = min_dist
+        
+    def __str__(self):
+        return 'Group Intrusion'
+
 class OutRoad(object):
     def __init__(self):
         pass

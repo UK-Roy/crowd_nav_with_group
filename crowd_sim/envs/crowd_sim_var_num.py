@@ -506,6 +506,7 @@ class CrowdSimVarNum(CrowdSim):
         self.leader = {}
         self.leader_act = {}
         self.grp = []
+        self.current_episode_group_intrusions = 0  # Reset counter for new episode
 
         for i in range(self.num_groups):
             self.grp.append(Group(i, self.min_size, self.max_size))
@@ -729,10 +730,19 @@ class CrowdSimVarNum(CrowdSim):
             reward = self.collision_penalty
             done = True
             episode_info = Collision()
+        # elif grp_collision:
+        #     reward = self.grp_collision_penalty
+        #     done = True
+        #     episode_info = GroupCollision()
         elif grp_collision:
+            # Don't terminate, just penalize
             reward = self.grp_collision_penalty
-            done = True
-            episode_info = GroupCollision()
+            done = False  # CHANGED: Continue episode
+            episode_info = GroupIntrusion(dmingrp)  # CHANGED: New info type
+            # Track group intrusion for metrics
+            if not hasattr(self, 'group_intrusion_count'):
+                self.group_intrusion_count = 0
+            self.group_intrusion_count += 1
         elif reaching_goal:
             reward = self.success_reward
             done = True
