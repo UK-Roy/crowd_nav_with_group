@@ -351,16 +351,36 @@ class CrowdSim(gym.Env):
         human.set(px, py, -px, -py, 0, 0, 0)
         return human
     
+    # def get_group_id(self, human):
+    #     """
+    #     Finds and returns the ID of a group with available capacity.
+    #     Returns None if no valid group is found.
+    #     """
+    #     for grp in self.grp:
+    #         if grp.check_validity():  # Checks if the group has space for more members
+    #             grp.add_member(human)
+    #             return grp.id
+    #     return None
     def get_group_id(self, human):
         """
         Finds and returns the ID of a group with available capacity.
-        Returns None if no valid group is found.
         """
+        # Check if this is a groups-only scenario
+        if hasattr(self, 'groups_only') and self.groups_only:
+            # Force assignment to a group
+            for grp in self.grp:
+                if grp.check_validity():
+                    grp.add_member(human)
+                    return grp.id
+            # If no space, create overflow group (shouldn't happen if configured correctly)
+            return 0
+        
+        # Normal logic (some humans can be individuals)
         for grp in self.grp:
-            if grp.check_validity():  # Checks if the group has space for more members
+            if grp.check_validity():
                 grp.add_member(human)
                 return grp.id
-        return None
+        return None  # Individual
 
 
     # update the robot belief of human states

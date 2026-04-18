@@ -40,7 +40,17 @@ class Config(object):
     reward.discomfort_grp_penalty_factor = 12
     
     reward.grp_collision_penalty = -21
-    
+
+    # whether to use GARN's group-related reward (R_grp) instead of default group reward
+    reward.use_garn_reward = True
+
+    # config for GARN reward function (Lu et al. RA-L 2025)
+    garn = BaseConfig()
+    garn.intrusion_penalty = -0.25     # Eq. 5: penalty per group intrusion per timestep
+    garn.c1 = 1.0                      # Eq. 6: overtaking/following weight
+    garn.c2 = 1.0                      # Eq. 8: cooperative passing weight
+    garn.d_t1 = 3.0                    # Eq. 7: consideration range for groups (meters)
+
     # config for Groups
     group = BaseConfig()
     group.num_groups = 2
@@ -123,7 +133,8 @@ class Config(object):
     robot.visible = False
     # For baseline: srnn; another method: selfAttn_merge_srnn
     # our method robot.policy = 'selfAttn_merge_srnn'
-    robot.policy = 'srnn'
+    # GARN baseline: 'garn'
+    robot.policy = 'garn'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"

@@ -10,7 +10,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
     # initializations
     eval_episode_rewards = []
 
-    if config.robot.policy not in ['orca', 'social_force']:
+    if config.robot.policy not in ['orca', 'social_force', 'zone_based', 'f_formation']:
         eval_recurrent_hidden_states = {}
 
         node_num = 1
@@ -83,7 +83,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
             stepCounter = stepCounter + 1
             act = None
             
-            if config.robot.policy not in ['orca', 'social_force']:
+            if config.robot.policy not in ['orca', 'social_force', 'zone_based', 'f_formation']:
                 # run inference on the NN policy
                 with torch.no_grad():
                     _, action, _, eval_recurrent_hidden_states = actor_critic.act(

@@ -6,6 +6,7 @@ from rl.networks.distributions import Bernoulli, Categorical, DiagGaussian
 from .srnn_model import SRNN
 from .selfAttn_srnn_temp_node_groupAttn import selfAttn_merge_SRNN_GrpAttn
 from .selfAttn_srnn_temp_node import selfAttn_merge_SRNN
+from .stgan_model import STGAN
 
 class Flatten(nn.Module):
     def forward(self, x):
@@ -25,6 +26,8 @@ class Policy(nn.Module):
             base = selfAttn_merge_SRNN
         elif base == 'selfAttn_merge_srnn_grpAttn':
             base = selfAttn_merge_SRNN_GrpAttn
+        elif base == 'garn':
+            base = STGAN
         else:
             raise NotImplementedError
 

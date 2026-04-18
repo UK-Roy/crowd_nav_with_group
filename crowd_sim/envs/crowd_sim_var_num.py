@@ -479,6 +479,117 @@ class CrowdSimVarNum(CrowdSim):
         # Give human new goal
         human.gx = gx
         human.gy = gy
+    
+
+    # def configure_scenario(self, test_case):
+    #     """Configure environment based on test scenario"""
+    
+    #     # Map test cases to scenarios
+    #     # scenario_map = {
+    #     #     range(0, 20): 'dense_groups',
+    #     #     range(20, 40): 'mixed_50_50',
+    #     #     range(40, 60): 'dynamic_formations',
+    #     #     range(60, 80): 'crossing_groups',
+    #     #     range(80, 100): 'static_dynamic_mix'
+    #     # }
+    #     scenario_map = {
+    #         range(0, 20): 'dense_groups',
+    #         range(20, 40): 'mixed_50_50',
+    #         range(40, 60): 'dynamic_formations',
+    #         range(60, 80): 'crossing_groups',
+    #         range(80, 90): 'static_dynamic_mix',
+    #         range(90, 100): 'groups_only'  # New scenario
+    #     }
+        
+    #     # Find which scenario to use
+    #     scenario_type = 'mixed_50_50'  # default
+    #     for test_range, scenario_name in scenario_map.items():
+    #         if test_case in test_range:
+    #             scenario_type = scenario_name
+    #             break
+        
+    #     # Get scenario configuration
+    #     from crowd_sim.envs.scenarios import ScenarioConfig
+    #     scenario = ScenarioConfig.get_scenario(scenario_type)
+        
+    #     # Apply configuration
+    #     self.num_groups = scenario['num_groups']
+    #     self.min_size = scenario['min_group_size']
+    #     self.max_size = scenario['max_group_size']
+    #     self.arena_size = scenario['arena_size']
+    #     self.human_num = scenario['human_num']
+    #     self.group_dynamic = scenario['group_dynamic']
+        
+    #     # Special handling for mixed scenarios
+    #     if scenario_type == 'mixed_50_50':
+    #         # Ensure only half humans join groups
+    #         self.grp = []
+    #         for i in range(self.num_groups):
+    #             grp = Group(i, self.min_size, self.max_size)
+    #             grp.max_member = 4  # Limit group size
+    #             self.grp.append(grp)
+        
+    #     return scenario_type, scenario['description']
+    def configure_scenario(self, test_case):
+        """Configure environment based on test scenario"""
+        
+        scenario_map = {
+            range(0, 20): 'dense_groups',
+            range(20, 40): 'mixed_50_50',
+            range(40, 60): 'dynamic_formations',
+            range(60, 80): 'crossing_groups',
+            range(80, 90): 'static_dynamic_mix',
+            range(90, 100): 'groups_only'  # New scenario
+        }
+        
+        # Find which scenario to use
+        scenario_type = 'mixed_50_50'  # default
+        for test_range, scenario_name in scenario_map.items():
+            if test_case in test_range:
+                scenario_type = scenario_name
+                break
+        
+        # Get scenario configuration
+        from crowd_sim.envs.scenarios import ScenarioConfig
+        scenario = ScenarioConfig.get_scenario(scenario_type)
+        
+        # Apply configuration
+        self.num_groups = scenario['num_groups']
+        self.min_size = scenario['min_group_size']
+        self.max_size = scenario['max_group_size']
+        self.arena_size = scenario['arena_size']
+        self.human_num = scenario['human_num']
+        self.group_dynamic = scenario['group_dynamic']
+        
+        # Special handling for mixed scenarios
+        if scenario_type == 'mixed_50_50':
+            # Ensure only half humans join groups
+            self.grp = []
+            for i in range(self.num_groups):
+                grp = Group(i, self.min_size, self.max_size)
+                grp.max_member = 4  # Limit group size
+                self.grp.append(grp)
+        
+        # ADD THIS: Special handling for groups-only scenario
+        elif scenario_type == 'groups_only':
+            # Ensure ALL humans join groups
+            self.grp = []
+            total_capacity = 0
+            humans_per_group = self.human_num // self.num_groups
+            remainder = self.human_num % self.num_groups
+            
+            for i in range(self.num_groups):
+                grp = Group(i, self.min_size, self.max_size)
+                # Distribute humans evenly across groups
+                grp.max_member = humans_per_group + (1 if i < remainder else 0)
+                self.grp.append(grp)
+                total_capacity += grp.max_member
+            
+            # Ensure human_num matches group capacity
+            self.human_num = min(self.human_num, total_capacity)
+            self.groups_only = True  # Flag for get_group_id
+        
+        return scenario_type, scenario['description']
 
 
     def reset(self, phase='train', test_case=None):
@@ -510,6 +621,18 @@ class CrowdSimVarNum(CrowdSim):
 
         for i in range(self.num_groups):
             self.grp.append(Group(i, self.min_size, self.max_size))
+
+
+        # Configure scenario if test case provided
+        scenario_type = 'default'
+        if test_case is not None and phase == 'test':
+            scenario_type, scenario_desc = self.configure_scenario(test_case)
+            print(f"Testing scenario: {scenario_desc}")
+            
+            # Re-initialize groups with new configuration
+            self.grp = []
+            for i in range(self.num_groups):
+                self.grp.append(Group(i, self.min_size, self.max_size))
         # self.human_num = self.config.sim.human_num
         # initialize a list to store observed humans' IDs
         self.observed_human_ids = []
@@ -722,6 +845,11 @@ class CrowdSimVarNum(CrowdSim):
             else:
                 min_danger_dist = 0
 
+        # GARN baseline uses its own group-related reward R_grp (Eqs. 4-8).
+        # When enabled, skip the legacy group-collision / group-discomfort
+        # branches and apply R_grp as an additive shaping term at the end.
+        use_garn_reward = getattr(self.config.reward, 'use_garn_reward', False)
+
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
@@ -734,7 +862,7 @@ class CrowdSimVarNum(CrowdSim):
         #     reward = self.grp_collision_penalty
         #     done = True
         #     episode_info = GroupCollision()
-        elif grp_collision:
+        elif grp_collision and not use_garn_reward:
             # Don't terminate, just penalize
             reward = self.grp_collision_penalty
             done = False  # CHANGED: Continue episode
@@ -747,8 +875,8 @@ class CrowdSimVarNum(CrowdSim):
             reward = self.success_reward
             done = True
             episode_info = ReachGoal()
-        
-        elif danger_cond_grp:
+
+        elif danger_cond_grp and not use_garn_reward:
             # only penalize agent for getting too close to grp if it's visible
             # adjust the reward based on FPS
             # print(dmin)
@@ -790,6 +918,17 @@ class CrowdSimVarNum(CrowdSim):
                 r_back = 0.
 
             reward = reward + r_spin + r_back
+
+        # GARN group-related reward R_grp (Lu et al. RA-L 2025, Eqs. 4-8).
+        # Applied as an additive shaping term, independent of the base reward.
+        if use_garn_reward:
+            from crowd_sim.envs.garn_reward import compute_group_reward
+            reward = reward + compute_group_reward(self)
+            # Keep intrusion count for GCR metrics even under the GARN reward path.
+            if grp_collision:
+                if not hasattr(self, 'group_intrusion_count'):
+                    self.group_intrusion_count = 0
+                self.group_intrusion_count += 1
 
         return reward, done, episode_info
 

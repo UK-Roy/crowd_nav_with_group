@@ -34,6 +34,8 @@ def main():
 	parser.add_argument('--render_traj', default=True, action='store_true')
 	# whether to save slide show of episodes
 	parser.add_argument('--save_slides', default=False, action='store_true')
+	parser.add_argument('--group_avoid', default=False, action='store_true', 
+                    help='Enable group avoidance (TAGA)')
  
 	test_args = parser.parse_args()
 	if test_args.save_slides:
@@ -54,6 +56,19 @@ def main():
 		from arguments import get_args
 
 	algo_args = get_args()
+
+	# Create a namespace for test-specific args that won't conflict
+	class TestConfig:
+		def __init__(self, test_args):
+			self.test_case = test_args.test_case
+			self.group_avoid = test_args.group_avoid
+			self.visualize = test_args.visualize
+			self.model_dir = test_args.model_dir
+			self.test_model = test_args.test_model
+			self.render_traj = test_args.render_traj
+			self.save_slides = test_args.save_slides
+
+	test_config = TestConfig(test_args)
 
 	# import config class from saved directory
 	# if not found, import from the default directory
@@ -91,6 +106,7 @@ def main():
 
 	numpy.random.seed(algo_args.seed)
 
+	# print(f"The robot policy is {config.robot.policy}, creating eval_recurrent_hidden_states")
 	torch.manual_seed(algo_args.seed)
 	torch.cuda.manual_seed_all(algo_args.seed)
 	if algo_args.cuda:
@@ -142,7 +158,8 @@ def main():
 						 algo_args.gamma, eval_dir, device, allow_early_resets=True,
 						 config=env_config, ax=ax, test_case=test_args.test_case, pretext_wrapper=config.env.use_wrapper)
 
-	if config.robot.policy not in ['orca', 'social_force']:
+	if config.robot.policy not in ['orca', 'social_force', 'zone_based', 'f_formation']:
+		# print(f"The robot policy is {config.robot.policy}, creating eval_recurrent_hidden_states")
 		# load the policy weights
 		actor_critic = Policy(
 			envs.observation_space.spaces,
@@ -160,7 +177,7 @@ def main():
 	test_size = config.env.test_size
 
 	# call the evaluation function
-	evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args, test_args.visualize, group_avoid_action=False)
+	evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args, test_args.visualize, group_avoid_action=test_args.group_avoid)
 
 
 if __name__ == '__main__':

@@ -101,29 +101,35 @@ class CrowdSimPred(CrowdSimVarNum):
         step function
         Compute actions for all agents, detect collision, update environment and return (ob, reward, done, info)
         """
-        if self.robot.policy.name == 'ORCA' and np.all(action == 0):
-            # assemble observation for orca: px, py, vx, vy, r
-            # include all observable humans from t to t+t_pred
-            _, _, human_visibility = self.get_num_human_in_fov()
-            # [self.predict_steps + 1, self.human_num, 4]
-            human_states = copy.deepcopy(self.calc_human_future_traj(method='truth'))
-            # append the radius, convert it to [human_num*(self.predict_steps+1), 5] by treating each predicted pos as a new human
-            human_states = np.concatenate((human_states.reshape((-1, 4)),
-                                           np.tile(self.last_human_states[:, -1], self.predict_steps+1).reshape((-1, 1))),
-                                          axis=1)
-            # get orca action
+        if self.robot.policy.name in ['ORCA', 'zone_based', 'f_formation'] and np.all(action == 0):
+            # For all reactive policies that need human states
+            if self.robot.policy.name == 'ORCA':
+                # ORCA needs future trajectory
+                _, _, human_visibility = self.get_num_human_in_fov()
+                human_states = copy.deepcopy(self.calc_human_future_traj(method='truth'))
+                human_states = np.concatenate((human_states.reshape((-1, 4)),
+                                            np.tile(self.last_human_states[:, -1], self.predict_steps+1).reshape((-1, 1))),
+                                            axis=1)
+            else:
+                # zone_based and f_formation use current states
+                human_states = copy.deepcopy(self.last_human_states)
+            
+            # Get action from the policy
             action = self.robot.act(human_states.tolist())
+            
         elif self.robot.policy.name == 'social_force' and np.all(action == 0):
-            # assemble observation for social_force: px, py, vx, vy, r
+            # Social force uses current states
             human_states = copy.deepcopy(self.last_human_states)
-            # get action
             action = self.robot.act(human_states.tolist())
+            
         else:
-            if self.robot.policy.name not in ['ORCA', 'social_force']:
+            # Neural network policies
+            if self.robot.policy.name not in ['ORCA', 'social_force', 'zone_based', 'f_formation']:
                 action = self.robot.policy.clip_action(action, self.robot.v_pref)
             else:
                 from crowd_sim.envs.utils.action import ActionXY
-                action = ActionXY(action[0], action[1])
+                if isinstance(action, (list, np.ndarray)):
+                    action = ActionXY(action[0], action[1])
 
         if self.robot.kinematics == 'unicycle':
             self.desiredVelocity[0] = np.clip(self.desiredVelocity[0] + action.v, -self.robot.v_pref, self.robot.v_pref)

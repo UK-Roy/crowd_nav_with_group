@@ -8,7 +8,7 @@ def get_args():
 
     # the saving directory for train.py
     parser.add_argument(
-        '--output_dir', type=str, default='trained_models/srnn')
+        '--output_dir', type=str, default='trained_models/garn')
         # '--output_dir', type=str, default='trained_models/my_model_group_attention')
 
     # resume training from an existing checkpoint or not
@@ -213,6 +213,17 @@ def get_args():
     # sort all humans and squeeze them to the front or not
     parser.add_argument('--sort_humans', type=bool, default=True)
 
+    # GARN-specific arguments (Lu et al. RA-L 2025 baseline)
+    parser.add_argument('--garn_gcn_layers', type=int, default=2,
+                        help='Number of GCN layers in STGAN')
+    parser.add_argument('--garn_lstm_hidden', type=int, default=128,
+                        help='LSTM hidden size in STGAN temporal encoder')
+    parser.add_argument('--garn_attn_embed_dim', type=int, default=128,
+                        help='Embedding dimension for attention extraction MLPs')
+    parser.add_argument('--garn_gcn_hidden', type=int, default=128,
+                        help='Hidden dimension for GCN layers')
+    parser.add_argument('--garn_node_feat_dim', type=int, default=32,
+                        help='Per-node feature dimension after initial embedding')
 
     args = parser.parse_args()
 
