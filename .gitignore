@@ -43,6 +43,14 @@ check_env.py
 # --- Submodule (managed separately) ---
 Python-RVO2
 
+# --- Documentation (keep only README.md tracked) ---
+*.md
+!README.md
+!**/README.md
+
+# --- Reference papers ---
+references/
+
 # --- Legacy / misc ---
 papers/
 ral/
