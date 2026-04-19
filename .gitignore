@@ -1,19 +1,48 @@
+# --- Datasets & large data ---
 gst_datasets/
 gst_updated/scripts/data
+
+# --- Training outputs ---
 trained_models/
-.idea/
-venv/
-*.log
-*.pyc 
+
+# --- Evaluation outputs ---
+videos/
+results/
+episode.mp4
+*.mp4
+
+# --- Python ---
+*.pyc
+*.pyo
+__pycache__/
 *__pycache__*
+*.egg-info/
 
-papers/
-ral/
+# --- Environments ---
+venv/
+.venv/
+conda-meta/
 
+# --- Logs ---
+*.log
 
+# --- IDE ---
+.idea/
+.vscode/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Scratch / local-only scripts ---
 train1.py
 test1.py
 test2.py
 check_env.py
 
+# --- Submodule (managed separately) ---
 Python-RVO2
+
+# --- Legacy / misc ---
+papers/
+ral/
