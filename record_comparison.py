@@ -207,10 +207,15 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
 
         taga_action = tangent * v_pref
         desired = alpha * taga_action + (1.0 - alpha) * base_action_np
-        obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device) if obs is not None else None
-        best_action = safety_ctrl.get_safe_taga_action(obs_tensor, desired, device)
 
-    return ActionXY(*best_action) if not isinstance(best_action, type(ActionXY(0,0))) else best_action
+        # Safety controller needs neural obs dict — only available for neural policies
+        if obs is not None and safety_ctrl is not None:
+            obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device)
+            best_action = safety_ctrl.get_safe_taga_action(obs_tensor, desired, device)
+        else:
+            best_action = desired
+
+    return ActionXY(*best_action) if not isinstance(best_action, type(ActionXY(0, 0))) else best_action
 
 # ── Render helpers ────────────────────────────────────────────────────────────
 GROUP_COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4']
