@@ -1,0 +1,5 @@
+policy,seed,success,collision,timeout,n_steps,total_reward,gcr
+orca,0,0,0,1,197,9.975,0.0
+orca,1,1,0,0,73,37.812,0.0
+social_force,0,0,0,1,197,39.948,0.0
+social_force,1,1,0,0,163,47.06,0.0

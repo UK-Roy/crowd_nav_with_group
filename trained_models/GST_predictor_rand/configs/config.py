@@ -124,7 +124,9 @@ class Config(object):
     robot.visible = False
     # For baseline: srnn; our method: selfAttn_merge_srnn
     # robot.policy = 'selfAttn_merge_srnn'
-    robot.policy = 'social_force'
+    # social_force
+    # zone_based
+    robot.policy = 'zone_based'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"
