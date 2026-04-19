@@ -207,62 +207,83 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
     goal_dir = np.array([gx - rx, gy - ry])
     goal_dir /= (np.linalg.norm(goal_dir) + 1e-9)
 
+    # Outer goal priority check — if any group passes this, skip TAGA
+    goal_priority_fire = any(
+        d_robot_goal < taga_cfg.goal_threshold and
+        d_robot_goal < math.hypot((c[0] if hasattr(c,'__len__') else c) - gx,
+                                   (c[1] if hasattr(c,'__len__') else 0) - gy)
+        for c, _ in zip(centroids, radii)
+    )
+
     best_action = base_action_np.copy()
-    for centroid, radius in zip(centroids, radii):
-        cx, cy = (centroid[0], centroid[1]) if hasattr(centroid, '__len__') else centroid
-        d_centroid      = math.hypot(cx - rx, cy - ry)
-        d_centroid_goal = math.hypot(cx - gx, cy - gy)
+    if not goal_priority_fire:
+        # P2: collect ALL blocking groups
+        blocking = []
+        for centroid, radius in zip(centroids, radii):
+            cx, cy = (centroid[0], centroid[1]) if hasattr(centroid, '__len__') else centroid
+            d_centroid      = math.hypot(cx - rx, cy - ry)
+            d_centroid_goal = math.hypot(cx - gx, cy - gy)
 
-        # Outer goal priority
-        if d_robot_goal < taga_cfg.goal_threshold and d_robot_goal < d_centroid_goal:
-            continue
+            robot_to_group = np.array([cx - rx, cy - ry])
+            if np.dot(goal_dir, robot_to_group) <= 0:
+                continue
+            if d_robot_goal < d_centroid_goal:
+                continue
 
-        # Group not ahead of robot
-        robot_to_group = np.array([cx - rx, cy - ry])
-        if np.dot(goal_dir, robot_to_group) <= 0:
-            continue
+            # P0: sigmoid alpha
+            d_switch = radius + taga_cfg.safe_margin
+            if taga_cfg.smooth_switching:
+                alpha = _sigmoid_alpha(d_centroid, d_switch, taga_cfg.switch_band)
+            else:
+                alpha = 1.0 if d_centroid < d_switch else 0.0
+            if alpha < 1e-3:
+                continue
 
-        # P0: sigmoid alpha — smooth S-curve, no hard step
-        d_switch = radius + taga_cfg.safe_margin
-        if taga_cfg.smooth_switching:
-            alpha = _sigmoid_alpha(d_centroid, d_switch, taga_cfg.switch_band)
-        else:
-            alpha = 1.0 if d_centroid < d_switch else 0.0
+            dx, dy   = cx - rx, cy - ry
+            norm_dxy = math.hypot(dx, dy) + 1e-9
+            cw_tang  = np.array([ dy, -dx]) / norm_dxy
+            ccw_tang = np.array([-dy,  dx]) / norm_dxy
 
-        if alpha < 1e-3:
-            continue
+            # P1: cost-aware side selection
+            if getattr(taga_cfg, 'cost_aware_side', False):
+                cw_cost  = (taga_cfg.w_goal * (1 - np.dot(cw_tang,  goal_dir)) / 2
+                            + taga_cfg.w_obstacle * _obstacle_cost_np(cw_tang,  rx, ry, env, (cx, cy), taga_cfg))
+                ccw_cost = (taga_cfg.w_goal * (1 - np.dot(ccw_tang, goal_dir)) / 2
+                            + taga_cfg.w_obstacle * _obstacle_cost_np(ccw_tang, rx, ry, env, (cx, cy), taga_cfg))
+                tangent = cw_tang if cw_cost <= ccw_cost else ccw_tang
+            else:
+                cw_angle  = np.arccos(np.clip(np.dot(cw_tang,  goal_dir), -1, 1))
+                ccw_angle = np.arccos(np.clip(np.dot(ccw_tang, goal_dir), -1, 1))
+                tangent   = cw_tang if cw_angle < ccw_angle else ccw_tang
 
-        # Inner goal priority
-        if d_robot_goal < d_centroid_goal:
-            break
+            blocking.append((alpha, tangent, d_centroid))
 
-        dx, dy   = cx - rx, cy - ry
-        norm_dxy = math.hypot(dx, dy) + 1e-9
-        cw_tang  = np.array([ dy, -dx]) / norm_dxy
-        ccw_tang = np.array([-dy,  dx]) / norm_dxy
+        if blocking:
+            if getattr(taga_cfg, 'multi_group', False):
+                # P2: weighted-average tangent, k-nearest groups
+                blocking.sort(key=lambda x: x[2])
+                blocking = blocking[:getattr(taga_cfg, 'max_groups', 3)]
+                agg = np.zeros(2)
+                total_w = 0.0
+                for alpha, tangent, d_g in blocking:
+                    w = alpha / (d_g + 1e-9)
+                    agg     += w * tangent
+                    total_w += w
+                norm_agg      = np.linalg.norm(agg)
+                tangent_final = agg / (norm_agg + 1e-9)
+                alpha_final   = min(sum(a for a, _, _ in blocking), 1.0)
+            else:
+                blocking.sort(key=lambda x: x[2])
+                alpha_final, tangent_final, _ = blocking[0]
 
-        # P1: cost-aware side selection
-        if getattr(taga_cfg, 'cost_aware_side', False):
-            cw_cost  = (taga_cfg.w_goal * (1 - np.dot(cw_tang,  goal_dir)) / 2
-                        + taga_cfg.w_obstacle * _obstacle_cost_np(cw_tang,  rx, ry, env, (cx, cy), taga_cfg))
-            ccw_cost = (taga_cfg.w_goal * (1 - np.dot(ccw_tang, goal_dir)) / 2
-                        + taga_cfg.w_obstacle * _obstacle_cost_np(ccw_tang, rx, ry, env, (cx, cy), taga_cfg))
-            tangent = cw_tang if cw_cost <= ccw_cost else ccw_tang
-        else:
-            cw_angle  = np.arccos(np.clip(np.dot(cw_tang,  goal_dir), -1, 1))
-            ccw_angle = np.arccos(np.clip(np.dot(ccw_tang, goal_dir), -1, 1))
-            tangent   = cw_tang if cw_angle < ccw_angle else ccw_tang
+            taga_action = tangent_final * v_pref
+            desired     = alpha_final * taga_action + (1.0 - alpha_final) * base_action_np
 
-        taga_action = tangent * v_pref
-        desired     = alpha * taga_action + (1.0 - alpha) * base_action_np
-
-        # Safety controller needs neural obs dict — only for neural policies
-        if obs is not None and safety_ctrl is not None:
-            obs_tensor  = torch.FloatTensor(obs).unsqueeze(0).to(device)
-            best_action = safety_ctrl.get_safe_taga_action(obs_tensor, desired, device)
-        else:
-            best_action = desired
-        break
+            if obs is not None and safety_ctrl is not None:
+                obs_tensor  = torch.FloatTensor(obs).unsqueeze(0).to(device)
+                best_action = safety_ctrl.get_safe_taga_action(obs_tensor, desired, device)
+            else:
+                best_action = desired
 
     return ActionXY(*best_action) if not isinstance(best_action, type(ActionXY(0, 0))) else best_action
 

@@ -183,66 +183,89 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                     taga_cfg = config.taga
                     v_pref = config.robot.v_pref
 
-                    # Iterate groups; preserve original first-match-wins semantics.
-                    # The only change from the paper's logic is that the binary
-                    # "close enough" threshold is replaced by a continuous alpha.
+                    robot_to_goal = goal_position - robot_position
+                    d_robot_goal  = torch.norm(robot_to_goal).item()
+
+                    # Outer goal priority: skip TAGA entirely this step
+                    goal_priority_fire = False
                     for group_id in detected_groups:
-                        centroid = group_centroids[group_id]
-                        radius = group_radii[group_id]
-
-                        robot_to_goal = goal_position - robot_position
-                        robot_to_group = centroid - robot_position
-                        d_robot_goal = torch.norm(robot_to_goal).item()
+                        centroid        = group_centroids[group_id]
                         d_centroid_goal = torch.norm(centroid - goal_position).item()
-                        d_group = torch.norm(robot_to_group).item()
-
-                        # Outer goal priority: abandon TAGA entirely.
                         if d_robot_goal < d_centroid_goal and d_robot_goal < taga_cfg.goal_threshold:
+                            goal_priority_fire = True
                             break
 
-                        # Group not ahead of the robot: try the next one.
-                        if torch.dot(robot_to_goal, robot_to_group).item() <= 0:
-                            continue
+                    if not goal_priority_fire:
+                        # P2: collect ALL blocking groups sorted by proximity
+                        blocking = []
+                        for group_id in detected_groups:
+                            centroid        = group_centroids[group_id]
+                            radius          = group_radii[group_id]
+                            robot_to_group  = centroid - robot_position
+                            d_centroid_goal = torch.norm(centroid - goal_position).item()
+                            d_group         = torch.norm(robot_to_group).item()
 
-                        # P0: sigmoid blend weight — smooth S-curve, no step discontinuity
-                        d_switch = float(radius) + taga_cfg.safe_margin
-                        if taga_cfg.smooth_switching:
-                            alpha = _sigmoid_alpha(d_group, d_switch, taga_cfg.switch_band)
-                        else:
-                            alpha = 1.0 if d_group < d_switch else 0.0
+                            # Group must be ahead of robot
+                            if torch.dot(robot_to_goal, robot_to_group).item() <= 0:
+                                continue
+                            # Inner goal priority per group
+                            if d_robot_goal < d_centroid_goal:
+                                continue
 
-                        if alpha <= 1e-3:
-                            continue
+                            # P0: sigmoid alpha
+                            d_switch = float(radius) + taga_cfg.safe_margin
+                            if taga_cfg.smooth_switching:
+                                alpha = _sigmoid_alpha(d_group, d_switch, taga_cfg.switch_band)
+                            else:
+                                alpha = 1.0 if d_group < d_switch else 0.0
 
-                        # Inner goal priority (matches original).
-                        if d_robot_goal < d_centroid_goal:
-                            break
+                            if alpha <= 1e-3:
+                                continue
 
-                        cw  = find_perpendi(robot_position, centroid, device, clockwise=True)
-                        ccw = find_perpendi(robot_position, centroid, device, clockwise=False)
+                            # P1: cost-aware side selection
+                            cw  = find_perpendi(robot_position, centroid, device, clockwise=True)
+                            ccw = find_perpendi(robot_position, centroid, device, clockwise=False)
+                            if taga_cfg.cost_aware_side:
+                                cw_cost  = _tangent_side_cost(cw,  robot_position, goal_position,
+                                                              obs, group_centroids, group_radii,
+                                                              detected_groups, group_id,
+                                                              taga_cfg, device)
+                                ccw_cost = _tangent_side_cost(ccw, robot_position, goal_position,
+                                                              obs, group_centroids, group_radii,
+                                                              detected_groups, group_id,
+                                                              taga_cfg, device)
+                                tangent = cw if cw_cost <= ccw_cost else ccw
+                            else:
+                                _, cw_angle = angle_between_vectors(cw, robot_to_goal)
+                                cw_angle  = cw_angle.item()
+                                ccw_angle = 180.0 - cw_angle
+                                tangent   = cw if cw_angle < ccw_angle else ccw
 
-                        # P1: cost-aware side selection
-                        if taga_cfg.cost_aware_side:
-                            cw_cost  = _tangent_side_cost(cw,  robot_position, goal_position,
-                                                          obs, group_centroids, group_radii,
-                                                          detected_groups, group_id,
-                                                          taga_cfg, device)
-                            ccw_cost = _tangent_side_cost(ccw, robot_position, goal_position,
-                                                          obs, group_centroids, group_radii,
-                                                          detected_groups, group_id,
-                                                          taga_cfg, device)
-                            tangent = cw if cw_cost <= ccw_cost else ccw
-                        else:
-                            _, cw_angle = angle_between_vectors(cw, robot_to_goal)
-                            cw_angle  = cw_angle.item()
-                            ccw_angle = 180.0 - cw_angle
-                            tangent   = cw if cw_angle < ccw_angle else ccw
+                            blocking.append((alpha, tangent, d_group))
 
-                        base_action = action[0]
-                        taga_scaled = tangent * v_pref
-                        desired = alpha * taga_scaled + (1.0 - alpha) * base_action
-                        act = safety_controller.get_safe_taga_action(obs, desired, device)
-                        break
+                        if blocking:
+                            if taga_cfg.multi_group:
+                                # P2: weighted-average tangent over k-nearest groups
+                                blocking.sort(key=lambda x: x[2])          # nearest first
+                                blocking = blocking[:taga_cfg.max_groups]
+                                agg = torch.zeros(2, device=device)
+                                total_w = 0.0
+                                for alpha, tangent, d_g in blocking:
+                                    w = alpha / (d_g + 1e-9)               # closer = higher weight
+                                    agg    += w * tangent
+                                    total_w += w
+                                agg_norm = torch.norm(agg)
+                                tangent_final = agg / (agg_norm + 1e-9)
+                                alpha_final   = min(sum(a for a, _, _ in blocking), 1.0)
+                            else:
+                                # Legacy: first (closest) group only
+                                blocking.sort(key=lambda x: x[2])
+                                alpha_final, tangent_final, _ = blocking[0]
+
+                            base_action = action[0]
+                            taga_scaled = tangent_final * v_pref
+                            desired = alpha_final * taga_scaled + (1.0 - alpha_final) * base_action
+                            act = safety_controller.get_safe_taga_action(obs, desired, device)
 
             # if the vec_pretext_normalize.py wrapper is used, send the predicted traj to env
             if args.env_name == 'CrowdSimPredRealGST-v0' and config.env.use_wrapper:

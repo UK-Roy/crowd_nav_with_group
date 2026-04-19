@@ -121,14 +121,15 @@ class Config(object):
 
     # Safety controller zones — expressed as multiples of (robot_radius + human_radius)
     # so they scale automatically with agent sizes.
-    # emergency_zone = 0.5 * (r_robot + r_human): inner boundary, max avoidance weight
-    # danger_zone    = 1.0 * (r_robot + r_human): mid boundary
-    # caution_zone   = 2.0 * (r_robot + r_human): outer boundary, avoidance begins
+    # With default radii (r_robot=r_human=0.3, sum=0.6):
+    #   emergency = 0.5 × 0.6 = 0.30 m  ← matches paper's d_critical = 0.3 m
+    #   danger    = 0.83 × 0.6 = 0.50 m ← matches paper's d_personal  = 0.5 m
+    #   caution   = 2.0 × 0.6 = 1.20 m  ← outer awareness boundary
     # Set use_scaled_zones=False to fall back to the fixed metre values below.
     taga.use_scaled_zones  = True
-    taga.emergency_factor  = 0.5     # × (r_robot + r_human)
-    taga.danger_factor     = 1.0
-    taga.caution_factor    = 2.0
+    taga.emergency_factor  = 0.5     # × (r_robot + r_human) → d_critical (paper)
+    taga.danger_factor     = 0.833   # × (r_robot + r_human) → d_personal  (paper)
+    taga.caution_factor    = 2.0     # × (r_robot + r_human) → outer boundary
     # Fallback fixed values (used when use_scaled_zones=False)
     taga.emergency_zone = 0.4
     taga.danger_zone    = 0.6
@@ -147,6 +148,11 @@ class Config(object):
     taga.cone_half_angle = 45.0       # degrees: cone half-angle for obstacle scan
     taga.w_goal = 0.6                 # weight for goal-alignment cost
     taga.w_obstacle = 0.4             # weight for obstacle-density cost
+    # multi-group aggregation (P2)
+    # True  = weighted-average tangent across ALL blocking groups
+    # False = legacy first-match-wins (break after first triggering group)
+    taga.multi_group = True
+    taga.max_groups  = 3              # max blocking groups to consider per step
 
     # config for simulation
     sim = BaseConfig()
