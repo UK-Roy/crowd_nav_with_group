@@ -50,9 +50,18 @@ python record_episode.py --seed 3 --dpi 150 --fps 10 --out episode.mp4
 
 **Record and compare multiple policies** (produces videos + metrics CSV):
 ```bash
-python record_comparison.py --policies orca,social_force,zone_based --seeds 0,1,2
-python record_comparison.py --policies orca,social_force --seeds 0,1,2 --no-video  # metrics only
+# All registered policies × N seeds
+python record_comparison.py --seeds 0,1,2
+
+# Subset by label
+python record_comparison.py --policies orca,orca+taga,garn --seeds 0,1,2
+
+# Metrics only (fast, no video rendering)
+python record_comparison.py --seeds 0,1,2,3,4 --no-video
 ```
+
+Outputs: `videos/<label>_seed<N>.mp4` and `results/metrics.csv`.
+Summary table columns: **SR** (success rate), **CR** (collision rate), **TR** (timeout rate), Avg Steps, Avg GCR, Avg Reward.
 
 **Evaluate trained model:**
 ```bash
@@ -148,7 +157,7 @@ Every `step()` call runs in this order:
 | `zone_based` | `ZoneBasedGroupAvoidance` | Heuristic group-aware |
 | `f_formation` | `FFormationAvoidance` | Heuristic group-aware |
 
-### Key files added in this session
+### Key files
 
 | File | Purpose |
 |---|---|
@@ -158,6 +167,32 @@ Every `step()` call runs in this order:
 | `record_episode.py` | Paper-quality video recorder (single policy) |
 | `record_comparison.py` | Multi-policy comparison recorder + metrics CSV |
 
+## Evaluation Metrics
+
+| Metric | Symbol | Description |
+|---|---|---|
+| Success Rate | SR | fraction of episodes where robot reached goal |
+| Collision Rate | CR | fraction of episodes with any collision |
+| Timeout Rate | TR | fraction of episodes that hit max_steps without success/collision |
+| Group Crossing Rate | GCR | avg fraction of steps the robot was inside a group hull (lower = less disruptive) |
+| Avg Steps | — | navigation efficiency |
+| Avg Reward | — | cumulative reward; shaped by GARN R_grp if enabled |
+
+Note: SR + CR + TR ≈ 1.0 is a sanity check across seeds.
+
+## `record_comparison.py` Policy Registry
+
+Edit `POLICY_REGISTRY` at the top of the file to add new policies — no other code changes needed. Each entry:
+
+```python
+dict(label='my_policy',
+     policy_key='key_in_policy_factory',   # or policy_factory key
+     model_dir='trained_models/my_model',  # None for classical
+     with_taga=True)                        # False for GARN
+```
+
+`expand_registry()` automatically generates a `<label>+taga` variant for every entry where `with_taga=True`.
+
 ## Important Behavioral Notes
 
 - **Convex hulls** are rebuilt every step from ground-truth `human.group_id` assignments — works in all env subclasses regardless of which `generate_ob` override is active.
@@ -166,6 +201,7 @@ Every `step()` call runs in this order:
 - **Parallel envs**: default 16 (`--num-processes`). Reduce to 8 if GPU OOM.
 - **GST predictor**: pre-trained models in `gst_updated/results/`. Path set via `pred.model_dir` in config.
 - **TAGA**: pass `--group_avoid` to `test.py`. Uses DBSCAN for runtime group detection.
+- **Group type assignment**: randomly drawn from `config.group.types` at every `reset()` — each episode can have a different mix of static/dynamic_lf/dynamic_free groups.
 
 ## Pre-trained Models
 
