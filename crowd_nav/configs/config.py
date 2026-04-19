@@ -118,10 +118,29 @@ class Config(object):
     taga.safe_margin = 0.25
     # robot ignores group avoidance within this distance to its goal (m)
     taga.goal_threshold = 3.0
-    # safety controller zones vs. nearest individual human (m)
+
+    # Safety controller zones — expressed as multiples of (robot_radius + human_radius)
+    # so they scale automatically with agent sizes.
+    # emergency_zone = 0.5 * (r_robot + r_human): inner boundary, max avoidance weight
+    # danger_zone    = 1.0 * (r_robot + r_human): mid boundary
+    # caution_zone   = 2.0 * (r_robot + r_human): outer boundary, avoidance begins
+    # Set use_scaled_zones=False to fall back to the fixed metre values below.
+    taga.use_scaled_zones  = True
+    taga.emergency_factor  = 0.5     # × (r_robot + r_human)
+    taga.danger_factor     = 1.0
+    taga.caution_factor    = 2.0
+    # Fallback fixed values (used when use_scaled_zones=False)
     taga.emergency_zone = 0.4
-    taga.danger_zone = 0.6
-    taga.caution_zone = 1.0
+    taga.danger_zone    = 0.6
+    taga.caution_zone   = 1.0
+
+    # Bounded-acceleration safety filter (P1)
+    # Max velocity change per time_step as a fraction of v_pref.
+    # Replaces hard emergency override with smooth velocity clipping.
+    # Set use_accel_limit=False to restore old hard-override behaviour.
+    taga.use_accel_limit   = True
+    taga.max_accel_factor  = 0.5     # max |Δv| per step = factor × v_pref
+
     # cost-aware tangent side selection (P1)
     taga.cost_aware_side = True       # False = legacy smaller-angle rule
     taga.look_ahead = 3.0             # metres ahead to scan for obstacles

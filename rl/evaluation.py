@@ -130,6 +130,8 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
         done = False
         rewards = []
         stepCounter = 0
+        if group_avoid_action:
+            safety_controller.reset()   # clear velocity history for accel filter
         episode_rew = 0
         obs = eval_envs.reset()
         global_time = 0.0
