@@ -33,6 +33,7 @@ import sys, argparse, os, csv, copy
 sys.path.insert(0, '.')
 sys.path.insert(0, 'crowd_nav')
 
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -154,10 +155,41 @@ def load_classical_policy(policy_key, config):
         p.time_step = config.env.time_step
     return p
 
+# ── TAGA helpers ─────────────────────────────────────────────────────────────
+def _sigmoid_alpha(d_group, d_switch, band):
+    """Sigmoid blend: 1 when close, 0 when far. Smooth S-curve, no step jump."""
+    return 1.0 / (1.0 + math.exp((d_group - d_switch) / max(band / 3.0, 1e-6)))
+
+
+def _obstacle_cost_np(tang_unit, rx, ry, env, skip_centroid_xy, taga_cfg):
+    """Obstacle density in a forward cone along tang_unit."""
+    cos_thresh = math.cos(math.radians(taga_cfg.cone_half_angle))
+    look_ahead = taga_cfg.look_ahead
+    cost = 0.0
+    for h in env.humans:
+        dx, dy = h.px - rx, h.py - ry
+        d = math.hypot(dx, dy)
+        if d < 1e-3 or d > look_ahead:
+            continue
+        rel_unit = np.array([dx, dy]) / d
+        if np.dot(tang_unit, rel_unit) > cos_thresh:
+            cost += 1.0 / (d + 0.1)
+    for (cx, cy), r in zip(env.group_centroids or [], env.group_radii or []):
+        if abs(cx - skip_centroid_xy[0]) < 1e-3 and abs(cy - skip_centroid_xy[1]) < 1e-3:
+            continue
+        dx, dy = cx - rx, cy - ry
+        d = math.hypot(dx, dy)
+        if d > look_ahead + r:
+            continue
+        rel_unit = np.array([dx, dy]) / (d + 1e-9)
+        if np.dot(tang_unit, rel_unit) > cos_thresh:
+            cost += 2.0 / (d + 0.1)
+    return cost
+
+
 # ── TAGA action computation ───────────────────────────────────────────────────
 def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
     """Blend base_action with TAGA tangent when robot is near a group."""
-    import torch
     from crowd_sim.envs.utils.action import ActionXY
 
     taga_cfg = config.taga
@@ -171,49 +203,66 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
 
     rx, ry = robot.px, robot.py
     gx, gy = robot.gx, robot.gy
-    d_robot_goal = np.hypot(gx - rx, gy - ry)
+    d_robot_goal = math.hypot(gx - rx, gy - ry)
+    goal_dir = np.array([gx - rx, gy - ry])
+    goal_dir /= (np.linalg.norm(goal_dir) + 1e-9)
 
     best_action = base_action_np.copy()
     for centroid, radius in zip(centroids, radii):
         cx, cy = (centroid[0], centroid[1]) if hasattr(centroid, '__len__') else centroid
-        d_centroid = np.hypot(cx - rx, cy - ry)
+        d_centroid      = math.hypot(cx - rx, cy - ry)
+        d_centroid_goal = math.hypot(cx - gx, cy - gy)
 
-        if d_robot_goal < taga_cfg.goal_threshold and d_robot_goal < d_centroid:
+        # Outer goal priority
+        if d_robot_goal < taga_cfg.goal_threshold and d_robot_goal < d_centroid_goal:
             continue
 
+        # Group not ahead of robot
+        robot_to_group = np.array([cx - rx, cy - ry])
+        if np.dot(goal_dir, robot_to_group) <= 0:
+            continue
+
+        # P0: sigmoid alpha — smooth S-curve, no hard step
         d_switch = radius + taga_cfg.safe_margin
         if taga_cfg.smooth_switching:
-            band  = taga_cfg.switch_band
-            alpha = np.clip((d_switch + band - d_centroid) / (2 * band), 0.0, 1.0)
+            alpha = _sigmoid_alpha(d_centroid, d_switch, taga_cfg.switch_band)
         else:
             alpha = 1.0 if d_centroid < d_switch else 0.0
 
         if alpha < 1e-3:
             continue
 
-        dx, dy = cx - rx, cy - ry
-        perp_cw  = np.array([ dy, -dx])
-        perp_ccw = np.array([-dy,  dx])
-        norm_cw  = np.linalg.norm(perp_cw)  + 1e-9
-        norm_ccw = np.linalg.norm(perp_ccw) + 1e-9
-        cw_tang  = perp_cw  / norm_cw
-        ccw_tang = perp_ccw / norm_ccw
+        # Inner goal priority
+        if d_robot_goal < d_centroid_goal:
+            break
 
-        goal_dir = np.array([gx - rx, gy - ry])
-        goal_dir /= (np.linalg.norm(goal_dir) + 1e-9)
-        cw_angle  = np.arccos(np.clip(np.dot(cw_tang,  goal_dir), -1, 1))
-        ccw_angle = np.arccos(np.clip(np.dot(ccw_tang, goal_dir), -1, 1))
-        tangent   = cw_tang if cw_angle < ccw_angle else ccw_tang
+        dx, dy   = cx - rx, cy - ry
+        norm_dxy = math.hypot(dx, dy) + 1e-9
+        cw_tang  = np.array([ dy, -dx]) / norm_dxy
+        ccw_tang = np.array([-dy,  dx]) / norm_dxy
+
+        # P1: cost-aware side selection
+        if getattr(taga_cfg, 'cost_aware_side', False):
+            cw_cost  = (taga_cfg.w_goal * (1 - np.dot(cw_tang,  goal_dir)) / 2
+                        + taga_cfg.w_obstacle * _obstacle_cost_np(cw_tang,  rx, ry, env, (cx, cy), taga_cfg))
+            ccw_cost = (taga_cfg.w_goal * (1 - np.dot(ccw_tang, goal_dir)) / 2
+                        + taga_cfg.w_obstacle * _obstacle_cost_np(ccw_tang, rx, ry, env, (cx, cy), taga_cfg))
+            tangent = cw_tang if cw_cost <= ccw_cost else ccw_tang
+        else:
+            cw_angle  = np.arccos(np.clip(np.dot(cw_tang,  goal_dir), -1, 1))
+            ccw_angle = np.arccos(np.clip(np.dot(ccw_tang, goal_dir), -1, 1))
+            tangent   = cw_tang if cw_angle < ccw_angle else ccw_tang
 
         taga_action = tangent * v_pref
-        desired = alpha * taga_action + (1.0 - alpha) * base_action_np
+        desired     = alpha * taga_action + (1.0 - alpha) * base_action_np
 
-        # Safety controller needs neural obs dict — only available for neural policies
+        # Safety controller needs neural obs dict — only for neural policies
         if obs is not None and safety_ctrl is not None:
-            obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device)
+            obs_tensor  = torch.FloatTensor(obs).unsqueeze(0).to(device)
             best_action = safety_ctrl.get_safe_taga_action(obs_tensor, desired, device)
         else:
             best_action = desired
+        break
 
     return ActionXY(*best_action) if not isinstance(best_action, type(ActionXY(0, 0))) else best_action
 

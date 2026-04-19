@@ -1,8 +1,69 @@
+import math
 import numpy as np
 import torch
 
 from crowd_sim.envs.utils.info import *
 from crowd_nav.policy.taga_safety import TAGASafetyController
+
+
+def _sigmoid_alpha(d_group, d_switch, band):
+    """Sigmoid blend weight: 1 when close to group, 0 when far.
+    Centered at d_switch; band/3 sets steepness so alpha≈0.95 at d_switch-band
+    and alpha≈0.05 at d_switch+band.
+    """
+    return 1.0 / (1.0 + math.exp((d_group - d_switch) / max(band / 3.0, 1e-6)))
+
+
+def _tangent_side_cost(tangent_dir, robot_pos, goal_pos, obs, group_centroids,
+                       group_radii, detected_groups, current_gid, taga_cfg, device):
+    """
+    Cost for choosing a given tangent direction.
+    cost = w_goal * goal_angle_cost + w_obstacle * obstacle_density_cost
+
+    goal_angle_cost  ∈ [0,1]: 0 = tangent aligned with goal, 1 = opposite
+    obstacle_density_cost: sum of 1/(d+0.1) for humans/groups in a forward cone
+    """
+    tang_unit = tangent_dir / (torch.norm(tangent_dir) + 1e-9)
+    goal_dir  = (goal_pos - robot_pos)
+    goal_dir  = goal_dir / (torch.norm(goal_dir) + 1e-9)
+
+    cos_to_goal  = torch.clamp(torch.dot(tang_unit, goal_dir), -1.0, 1.0)
+    goal_cost    = (1.0 - cos_to_goal) / 2.0  # [0, 1]
+
+    cos_thresh   = math.cos(math.radians(taga_cfg.cone_half_angle))
+    look_ahead   = taga_cfg.look_ahead
+    obs_cost     = 0.0
+
+    # Individual humans from spatial_edges
+    if obs is not None and 'spatial_edges' in obs:
+        spatial = obs['spatial_edges'][0]   # [num_humans, features]
+        masks   = obs.get('visible_masks', [None])[0]
+        for i in range(len(spatial)):
+            if masks is not None and not masks[i]:
+                continue
+            rel  = spatial[i, :2]
+            d    = torch.norm(rel).item()
+            if d < 1e-3 or d > look_ahead:
+                continue
+            rel_unit = rel / (torch.norm(rel) + 1e-9)
+            if torch.dot(tang_unit, rel_unit).item() > cos_thresh:
+                obs_cost += 1.0 / (d + 0.1)
+
+    # Other groups
+    for gid in detected_groups:
+        if gid == current_gid:
+            continue
+        g_cent = group_centroids[gid]
+        g_rad  = float(group_radii[gid])
+        rel    = g_cent - robot_pos
+        d      = torch.norm(rel).item()
+        if d > look_ahead + g_rad:
+            continue
+        rel_unit = rel / (torch.norm(rel) + 1e-9)
+        if torch.dot(tang_unit, rel_unit).item() > cos_thresh:
+            obs_cost += 2.0 / (d + 0.1)   # groups weighted double vs. individuals
+
+    return taga_cfg.w_goal * goal_cost.item() + taga_cfg.w_obstacle * obs_cost
 
 
 def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging, config, args, visualize=False, group_avoid_action=False):
@@ -141,35 +202,39 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                         if torch.dot(robot_to_goal, robot_to_group).item() <= 0:
                             continue
 
-                        # Continuous activation weight alpha:
-                        #   alpha = 1 when d_group < d_switch - band
-                        #   alpha = 0 when d_group > d_switch + band
-                        #   linear ramp in between.
+                        # P0: sigmoid blend weight — smooth S-curve, no step discontinuity
                         d_switch = float(radius) + taga_cfg.safe_margin
                         if taga_cfg.smooth_switching:
-                            band = taga_cfg.switch_band
-                            if d_group < d_switch - band:
-                                alpha = 1.0
-                            elif d_group > d_switch + band:
-                                alpha = 0.0
-                            else:
-                                alpha = (d_switch + band - d_group) / (2.0 * band)
+                            alpha = _sigmoid_alpha(d_group, d_switch, taga_cfg.switch_band)
                         else:
                             alpha = 1.0 if d_group < d_switch else 0.0
 
-                        if alpha <= 0.0:
+                        if alpha <= 1e-3:
                             continue
 
                         # Inner goal priority (matches original).
                         if d_robot_goal < d_centroid_goal:
                             break
 
-                        cw = find_perpendi(robot_position, centroid, device, clockwise=True)
+                        cw  = find_perpendi(robot_position, centroid, device, clockwise=True)
                         ccw = find_perpendi(robot_position, centroid, device, clockwise=False)
-                        _, cw_angle = angle_between_vectors(cw, robot_to_goal)
-                        cw_angle = cw_angle.item()
-                        ccw_angle = 180.0 - cw_angle
-                        tangent = cw if cw_angle < ccw_angle else ccw
+
+                        # P1: cost-aware side selection
+                        if taga_cfg.cost_aware_side:
+                            cw_cost  = _tangent_side_cost(cw,  robot_position, goal_position,
+                                                          obs, group_centroids, group_radii,
+                                                          detected_groups, group_id,
+                                                          taga_cfg, device)
+                            ccw_cost = _tangent_side_cost(ccw, robot_position, goal_position,
+                                                          obs, group_centroids, group_radii,
+                                                          detected_groups, group_id,
+                                                          taga_cfg, device)
+                            tangent = cw if cw_cost <= ccw_cost else ccw
+                        else:
+                            _, cw_angle = angle_between_vectors(cw, robot_to_goal)
+                            cw_angle  = cw_angle.item()
+                            ccw_angle = 180.0 - cw_angle
+                            tangent   = cw if cw_angle < ccw_angle else ccw
 
                         base_action = action[0]
                         taga_scaled = tangent * v_pref

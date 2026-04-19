@@ -109,8 +109,8 @@ class Config(object):
 
     # config for TAGA (Tangent Action for Group Avoidance)
     taga = BaseConfig()
-    # smooth (blended) switching between base policy and tangent action vs. the
-    # original hard threshold. Set False to recover the paper's original behaviour.
+    # smooth (sigmoid) switching between base policy and tangent action
+    # Set False to recover original hard-threshold behaviour
     taga.smooth_switching = True
     # half-width of the blending band around the activation threshold (m)
     taga.switch_band = 0.25
@@ -122,6 +122,12 @@ class Config(object):
     taga.emergency_zone = 0.4
     taga.danger_zone = 0.6
     taga.caution_zone = 1.0
+    # cost-aware tangent side selection (P1)
+    taga.cost_aware_side = True       # False = legacy smaller-angle rule
+    taga.look_ahead = 3.0             # metres ahead to scan for obstacles
+    taga.cone_half_angle = 45.0       # degrees: cone half-angle for obstacle scan
+    taga.w_goal = 0.6                 # weight for goal-alignment cost
+    taga.w_obstacle = 0.4             # weight for obstacle-density cost
 
     # config for simulation
     sim = BaseConfig()
