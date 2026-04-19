@@ -73,16 +73,14 @@ POLICY_REGISTRY = [
          with_taga=True),
     dict(label='social_force',   policy_key='social_force',            model_dir=None,
          with_taga=True),
-    dict(label='zone_based',     policy_key='zone_based',              model_dir=None,
+    dict(label='srnn',           policy_key='srnn',                    model_dir=None,
          with_taga=True),
-    dict(label='f_formation',    policy_key='f_formation',             model_dir=None,
-         with_taga=True),
-    dict(label='ds_rnn',         policy_key='selfAttn_merge_srnn',
+    dict(label='intention_rl',   policy_key='selfAttn_merge_srnn',
          model_dir='trained_models/GST_predictor_rand',                with_taga=True),
     dict(label='gram',           policy_key='selfAttn_merge_srnn_grpAttn',
-         model_dir='trained_models/GST_predictor_rand',                with_taga=True),
+         model_dir='trained_models/my_model',                          with_taga=True),
     dict(label='garn',           policy_key='garn',
-         model_dir='trained_models/garn_realistic',                    with_taga=False),
+         model_dir='trained_models/garn',                              with_taga=False),
 ]
 
 # ── Filter registry by --policies flag ───────────────────────────────────────
