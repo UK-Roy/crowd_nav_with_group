@@ -480,8 +480,8 @@ if all_metrics:
         w.writerows(all_metrics)
     print(f"\nMetrics saved → {csv_path}")
 
-    print(f"\n{'Policy':<25} {'SR':>5} {'CR':>5} {'Avg Steps':>10} {'Avg GCR':>9} {'Avg Reward':>11}")
-    print('-' * 70)
+    print(f"\n{'Policy':<25} {'SR':>5} {'CR':>5} {'TR':>5} {'Avg Steps':>10} {'Avg GCR':>9} {'Avg Reward':>11}")
+    print('-' * 76)
     seen = []
     for entry in ALL_ENTRIES:
         lbl  = entry['label']
@@ -492,6 +492,7 @@ if all_metrics:
         print(f"{lbl:<25} "
               f"{np.mean([r['success']      for r in rows]):>5.2f} "
               f"{np.mean([r['collision']    for r in rows]):>5.2f} "
+              f"{np.mean([r['timeout']      for r in rows]):>5.2f} "
               f"{np.mean([r['n_steps']      for r in rows]):>10.1f} "
               f"{np.mean([r['gcr']          for r in rows]):>9.4f} "
               f"{np.mean([r['total_reward'] for r in rows]):>11.2f}")
