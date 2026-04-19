@@ -93,9 +93,22 @@ def compute_group_reward(env):
 
     # --- (a) R_grp^intra (Eq. 5) -----------------------------------------
     # Indicator 1_{d_m}: robot is inside the group's spatial boundary.
-    # Approximation: use the bounding radius (consistent with the rest of
-    # the codebase's group collision logic).
-    inside = (dist_curr < radii).astype(np.float32)
+    # When realistic.use_convex_hull is on, use the accurate hull test so
+    # every policy (GARN, TAGA, GRAM, ORCA, ...) is evaluated consistently.
+    realistic = getattr(env.config, "realistic", None)
+    use_hull = (realistic is not None and realistic.enabled
+                and realistic.use_convex_hull)
+    group_hulls = getattr(env, "group_hulls", {})
+
+    if use_hull and group_hulls:
+        inside = np.array(
+            [float(group_hulls[i].contains(robot_pos))
+             if i in group_hulls else float(dist_curr[i] < radii[i])
+             for i in range(len(centroids))],
+            dtype=np.float32,
+        )
+    else:
+        inside = (dist_curr < radii).astype(np.float32)
     outside = 1.0 - inside
     R_intra = float((intrusion_penalty * inside).sum())
 

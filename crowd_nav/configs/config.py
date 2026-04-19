@@ -53,26 +53,86 @@ class Config(object):
 
     # config for Groups
     group = BaseConfig()
-    group.num_groups = 2
-     
-    group.min_size = 3 
+    group.num_groups = 3        # 3 groups × 3-4 members = 9-12 group humans; rest are individuals
+
+    group.min_size = 3
     group.max_size = 4
-    
-    group.min_distance = 2.0    
-    
+
+    group.min_distance = 2.0
+
     group.min_radius = 1.0
     group.max_radius = 1.3
-    
-    group.dynamic = False
+
+    group.dynamic = True
     group.ground_truth = True
-    
+    # Pool of group types assigned randomly per group at each reset.
+    # 'static_f'    — stationary F-formation (Kendon 1990)
+    # 'dynamic_lf'  — moving, followers track leader (Helbing & Molnar 1995)
+    # 'dynamic_free'— moving, each member navigates independently (ORCA)
+    group.types = ['static_f', 'dynamic_lf', 'dynamic_free']
+
     group.avoid_action = False
-     
+
+    # How many of the groups are placed along the robot→goal path to guarantee
+    # the robot encounters them. Remaining groups are placed randomly.
+    group.num_on_path = 2
+
+    # config for realistic pedestrian / group modeling (shared benchmark env)
+    # Every sub-flag gates a discrete feature; defaults are *off* so trained
+    # checkpoints load bit-exactly. Flip on individually as phases validate.
+    realistic = BaseConfig()
+    realistic.enabled = True                    # master kill-switch
+    realistic.use_speed_variation = True        # Phase A: Weidmann 1992 v_pref
+    realistic.use_group_speed_factor = True     # Phase B: Moussaid 2010 slowdown
+    realistic.use_f_formations = True           # Phase C: Kendon 1990 (for static_f groups)
+    realistic.use_leader_follower = True        # Phase D: Helbing & Molnar 1995 (for dynamic_lf groups)
+    realistic.use_convex_hull = True            # Phase E: group geometry
+
+    # Phase A — individual preferred-speed distribution (Weidmann 1992)
+    realistic.individual_speed_mean = 1.34
+    realistic.individual_speed_std  = 0.26
+    realistic.individual_speed_min  = 0.80
+    realistic.individual_speed_max  = 1.80
+
+    # Phase B
+    realistic.group_speed_factor = 0.85
+
+    # Phase C
+    realistic.f_formation_radius = 0.65
+
+    # Phase D
+    realistic.leader_follower_spacing = 0.70
+    realistic.leader_follower_gain = 1.20
+
+    # Phase E
+    realistic.hull_degenerate_buffer = 0.30
+
+    # config for TAGA (Tangent Action for Group Avoidance)
+    taga = BaseConfig()
+    # smooth (blended) switching between base policy and tangent action vs. the
+    # original hard threshold. Set False to recover the paper's original behaviour.
+    taga.smooth_switching = True
+    # half-width of the blending band around the activation threshold (m)
+    taga.switch_band = 0.25
+    # extra margin added to group radius to trigger TAGA (m) — center of the band
+    taga.safe_margin = 0.25
+    # robot ignores group avoidance within this distance to its goal (m)
+    taga.goal_threshold = 3.0
+    # safety controller zones vs. nearest individual human (m)
+    taga.emergency_zone = 0.4
+    taga.danger_zone = 0.6
+    taga.caution_zone = 1.0
+
     # config for simulation
     sim = BaseConfig()
     sim.circle_radius = 6 * np.sqrt(2)
     sim.arena_size = 6
     sim.human_num = 20
+    # Composition toggles. True/True = mixed (default, legacy behaviour).
+    # True/False = individuals only. False/True = groups only (forces every
+    # human into a group; clip human_num to total group capacity).
+    sim.has_individuals = True
+    sim.has_groups = True
     # actual human num in each timestep, in [human_num-human_num_range, human_num+human_num_range]
     sim.human_num_range = 0
     sim.predict_steps = 5

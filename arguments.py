@@ -225,7 +225,7 @@ def get_args():
     parser.add_argument('--garn_node_feat_dim', type=int, default=32,
                         help='Per-node feature dimension after initial embedding')
 
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 

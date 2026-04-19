@@ -97,76 +97,85 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                 global_time = baseEnv.global_time
            
             if group_avoid_action:
-                taga_action_computed = False
-                taga_action = None
-                
                 if obs['grp']:
                     group_list = obs['clusters'][0]
                     group_dict = {}
                     for idx, group_id in enumerate(group_list):
-                        if group_id != -1:  # Ignore -1 values
-                            group_dict.setdefault(group_id, []).append(idx)
+                        if group_id != -1:
+                            group_dict.setdefault(int(group_id), []).append(idx)
                     grp_obs = {'group_members': group_dict,
-                            'group_centroids': obs['group_centroids'],
-                            'group_radii': obs['group_radii']}
-                
-                if grp_obs:
-                    # Identify detected groups and calculate their positions
-                    detected_groups = grp_obs.get('group_members', {})
-                    
-                    if detected_groups:
-                        group_centroids = grp_obs['group_centroids'][0]
-                        group_radii = grp_obs['group_radii'][0]
-                        
-                        # Robot's current position and goal position
-                        robot_position = torch.tensor([obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
-                        goal_position = torch.tensor([obs['robot_node'][0, 0, 3], obs['robot_node'][0, 0, 4]], device=device)
-                        
-                        goal_threshold = 3  # Distance where the robot prioritizes goal over group avoidance
-                        safe_margin = 0.25  # Safety margin around groups
-                        
-                        # Now adjust the robot's velocity based on group avoidance
-                        for centroid, radius in zip(group_centroids, group_radii):
-                            # Calculate the vector from the robot to the goal
-                            robot_to_goal = goal_position - robot_position
-                            distance_robot_to_goal = torch.norm(robot_to_goal)
-                            distance_centroid_to_goal = torch.norm(centroid - goal_position)
-                            
-                            robot_to_goal = robot_to_goal
-                            robot_to_group = centroid - robot_position
-                            
-                            if distance_robot_to_goal < distance_centroid_to_goal and distance_robot_to_goal < goal_threshold:
-                                break  # Stop avoiding the group, focus on the goal
-                            
-                            # Check if the group is between the robot and the goal
-                            if torch.dot(robot_to_goal, robot_to_group) > 0:
-                                # Calculate the distance from the group to the goal path
-                                distance_to_group = torch.norm(robot_to_group)
-                                
-                                # If the group is too close, adjust the robot's action to avoid it
-                                if distance_to_group < radius + safe_margin:
-                                    # Prioritize the goal if the robot is closer to the goal than the group centroid
-                                    if distance_robot_to_goal < distance_centroid_to_goal:
-                                        break  # Focus on goal
-                                    
-                                    # Compute TAGA action
-                                    clockwise_perpendicular = find_perpendi(robot_position, centroid, device, clockwise=True)
-                                    anticlockwise_perpendicular = find_perpendi(robot_position, centroid, device, clockwise=False)
-                                    
-                                    rad, clockwise_angle_deg = angle_between_vectors(clockwise_perpendicular, robot_to_goal)
-                                    anticlockwise_angle_deg = 180 - clockwise_angle_deg
-                                    
-                                    # Choose the best avoidance direction based on the smaller angle
-                                    if clockwise_angle_deg < anticlockwise_angle_deg:
-                                        taga_action = clockwise_perpendicular
-                                    else:
-                                        taga_action = anticlockwise_perpendicular
-                                    
-                                    taga_action_computed = True
-                                    
-                                    # CRITICAL CHANGE: Apply safety layer to TAGA action
-                                    act = safety_controller.get_safe_taga_action(obs, taga_action, device)
-                                    break  # Only adjust for the nearest group 
+                               'group_centroids': obs['group_centroids'],
+                               'group_radii': obs['group_radii']}
+
+                if grp_obs and grp_obs.get('group_members'):
+                    detected_groups = grp_obs['group_members']
+                    group_centroids = grp_obs['group_centroids'][0]
+                    group_radii = grp_obs['group_radii'][0]
+
+                    robot_position = torch.tensor(
+                        [obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)
+                    goal_position = torch.tensor(
+                        [obs['robot_node'][0, 0, 3], obs['robot_node'][0, 0, 4]], device=device)
+
+                    taga_cfg = config.taga
+                    v_pref = config.robot.v_pref
+
+                    # Iterate groups; preserve original first-match-wins semantics.
+                    # The only change from the paper's logic is that the binary
+                    # "close enough" threshold is replaced by a continuous alpha.
+                    for group_id in detected_groups:
+                        centroid = group_centroids[group_id]
+                        radius = group_radii[group_id]
+
+                        robot_to_goal = goal_position - robot_position
+                        robot_to_group = centroid - robot_position
+                        d_robot_goal = torch.norm(robot_to_goal).item()
+                        d_centroid_goal = torch.norm(centroid - goal_position).item()
+                        d_group = torch.norm(robot_to_group).item()
+
+                        # Outer goal priority: abandon TAGA entirely.
+                        if d_robot_goal < d_centroid_goal and d_robot_goal < taga_cfg.goal_threshold:
+                            break
+
+                        # Group not ahead of the robot: try the next one.
+                        if torch.dot(robot_to_goal, robot_to_group).item() <= 0:
+                            continue
+
+                        # Continuous activation weight alpha:
+                        #   alpha = 1 when d_group < d_switch - band
+                        #   alpha = 0 when d_group > d_switch + band
+                        #   linear ramp in between.
+                        d_switch = float(radius) + taga_cfg.safe_margin
+                        if taga_cfg.smooth_switching:
+                            band = taga_cfg.switch_band
+                            if d_group < d_switch - band:
+                                alpha = 1.0
+                            elif d_group > d_switch + band:
+                                alpha = 0.0
+                            else:
+                                alpha = (d_switch + band - d_group) / (2.0 * band)
+                        else:
+                            alpha = 1.0 if d_group < d_switch else 0.0
+
+                        if alpha <= 0.0:
+                            continue
+
+                        # Inner goal priority (matches original).
+                        if d_robot_goal < d_centroid_goal:
+                            break
+
+                        cw = find_perpendi(robot_position, centroid, device, clockwise=True)
+                        ccw = find_perpendi(robot_position, centroid, device, clockwise=False)
+                        _, cw_angle = angle_between_vectors(cw, robot_to_goal)
+                        cw_angle = cw_angle.item()
+                        ccw_angle = 180.0 - cw_angle
+                        tangent = cw if cw_angle < ccw_angle else ccw
+
+                        base_action = action[0]
+                        taga_scaled = tangent * v_pref
+                        desired = alpha * taga_scaled + (1.0 - alpha) * base_action
+                        act = safety_controller.get_safe_taga_action(obs, desired, device)
+                        break
 
             # if the vec_pretext_normalize.py wrapper is used, send the predicted traj to env
             if args.env_name == 'CrowdSimPredRealGST-v0' and config.env.use_wrapper:

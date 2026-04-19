@@ -14,6 +14,7 @@ from crowd_sim.envs.utils.info import *
 from crowd_sim.envs.utils.human import Human
 from crowd_sim.envs.utils.group import Group
 from crowd_sim.envs.utils.state import JointState
+from crowd_sim.envs.utils.realistic_human_modeling import ConvexHullGeometry, build_group_hulls
 
 
 class CrowdSimVarNum(CrowdSim):
@@ -34,6 +35,7 @@ class CrowdSimVarNum(CrowdSim):
         self.pred_method = None
         self.group_centroids = None
         self.group_radii = None
+        self.group_hulls = {}
         
     def configure(self, config):
         """ read the config to the environment variables """
@@ -231,6 +233,36 @@ class CrowdSimVarNum(CrowdSim):
         return self.human_future_traj
 
  
+    def _update_group_hulls(self):
+        """Build self.group_hulls from ground-truth human group_id assignments.
+
+        Called from step() so it works regardless of which generate_ob override
+        is active (CrowdSimVarNum, CrowdSimPred, CrowdSimPredRealGST, etc.).
+        """
+        realistic = getattr(self.config, "realistic", None)
+        if realistic is None or not realistic.enabled or not realistic.use_convex_hull:
+            self.group_hulls = {}
+            return
+
+        group_positions = {}
+        for human in self.humans:
+            gid = getattr(human, 'group_id', None)
+            if gid is None:
+                continue
+            if gid not in group_positions:
+                group_positions[gid] = []
+            group_positions[gid].append([human.px, human.py])
+
+        if not group_positions:
+            self.group_hulls = {}
+            return
+
+        self.group_hulls = build_group_hulls(
+            {gid: np.array(pos) for gid, pos in group_positions.items()},
+            human_radius=self.config.humans.radius,
+            buffer=realistic.hull_degenerate_buffer,
+        )
+
     def generate_ob(self, reset, sort=False):
         """Generate observation with added direction consistency for group detection."""
         ob = {}
@@ -425,25 +457,33 @@ class CrowdSimVarNum(CrowdSim):
         
         if detected_groups:
             grp_detected = True
-            self.group_centroids = []  # To store group centroids
-            self.group_radii = []      # To store group safety radii
+            self.group_centroids = []
+            self.group_radii = []
+
+            realistic = getattr(self.config, "realistic", None)
+            use_hull = (realistic is not None and realistic.enabled
+                        and realistic.use_convex_hull)
 
             for group_id, human_ids in detected_groups.items():
-                group_positions = np.array([[self.last_human_states[i, 0], self.last_human_states[i, 1]] 
+                group_positions = np.array([[self.last_human_states[i, 0],
+                                             self.last_human_states[i, 1]]
                                             for i in human_ids])
 
-                # Calculate the centroid of the group
                 centroid = np.mean(group_positions, axis=0)
                 self.group_centroids.append(centroid)
-                
                 grp_centroids[group_id, 0] = centroid[0]
                 grp_centroids[group_id, 1] = centroid[1]
 
-                # Calculate the group's bounding radius (or convex hull radius)
-                max_distance = np.max(np.linalg.norm(group_positions - centroid, axis=1))
-                radii = max_distance + self.group_safety_buffer
-                self.group_radii.append(radii)  # Add safety buffer
-                grp_radii[group_id] = radii 
+                if use_hull and group_id in self.group_hulls:
+                    # Hull bounding_radius replaces the bounding-circle radius
+                    radii = self.group_hulls[group_id].bounding_radius
+                else:
+                    max_distance = np.max(
+                        np.linalg.norm(group_positions - centroid, axis=1))
+                    radii = max_distance + self.group_safety_buffer
+
+                self.group_radii.append(radii)
+                grp_radii[group_id] = radii
 
             ob['grp'] = grp_detected
             # if ob['grp']:
@@ -698,6 +738,9 @@ class CrowdSimVarNum(CrowdSim):
             # use ground truth future positions of humans
             self.calc_human_future_traj(method='truth')
 
+        # update convex-hull group geometry (ground-truth, works in all subclasses)
+        self._update_group_hulls()
+
         # compute reward and episode info
         reward, done, episode_info = self.calc_reward(action, danger_zone='future')
 
@@ -706,6 +749,10 @@ class CrowdSimVarNum(CrowdSim):
         self.robot.step(action)
         for i, human_action in enumerate(human_actions):
             self.humans[i].step(human_action)
+
+        # Hard separation: push overlapping humans apart so no two agents
+        # ever visually merge. Applied to ALL human pairs (not just groups).
+        self._enforce_separation()
 
         self.global_time += self.time_step # max episode length=time_limit/time_step
         self.step_counter =self.step_counter+1
@@ -796,23 +843,40 @@ class CrowdSimVarNum(CrowdSim):
         
         danger_dists = []
         grp_collision = False
-        
-        # collision check with groups
-        if self.group_centroids is not None:
-            for i, center in enumerate(self.group_centroids):
-                dx = center[0] - self.robot.px
-                dy = center[1] - self.robot.py
-                # closest_dist = (dx ** 2 + dy ** 2) ** (1 / 2) - self.group_radii[i] - self.group_safety_buffer - self.robot.radius
-                closest_dist = (dx ** 2 + dy ** 2) ** (1 / 2) - self.group_radii[i] - 0.05
 
-                if closest_dist < self.discomfort_group_dist:
-                    danger_dists.append(closest_dist)
-                if closest_dist < 0:
-                    grp_collision = True
-                    # print(f"Group Id: {i}")
-                    break
-                elif closest_dist < dmingrp:
-                    dmingrp = closest_dist
+        # collision check with groups
+        realistic = getattr(self.config, "realistic", None)
+        use_hull = (realistic is not None and realistic.enabled
+                    and realistic.use_convex_hull)
+        robot_pos = np.array([self.robot.px, self.robot.py])
+
+        if self.group_centroids is not None:
+            group_hulls = getattr(self, "group_hulls", {})
+            for i, center in enumerate(self.group_centroids):
+                if use_hull and i in group_hulls:
+                    # Phase E: accurate point-in-hull intrusion test
+                    if group_hulls[i].contains(robot_pos):
+                        grp_collision = True
+                        closest_dist = group_hulls[i].distance_to_boundary(robot_pos)
+                        dmingrp = min(dmingrp, closest_dist)
+                        break
+                    else:
+                        closest_dist = group_hulls[i].distance_to_boundary(robot_pos)
+                        if closest_dist < self.discomfort_group_dist:
+                            danger_dists.append(closest_dist)
+                        if closest_dist < dmingrp:
+                            dmingrp = closest_dist
+                else:
+                    dx = center[0] - self.robot.px
+                    dy = center[1] - self.robot.py
+                    closest_dist = (dx ** 2 + dy ** 2) ** (1 / 2) - self.group_radii[i] - 0.05
+                    if closest_dist < self.discomfort_group_dist:
+                        danger_dists.append(closest_dist)
+                    if closest_dist < 0:
+                        grp_collision = True
+                        break
+                    elif closest_dist < dmingrp:
+                        dmingrp = closest_dist
 
 
         # check if reaching the goal
@@ -825,6 +889,7 @@ class CrowdSimVarNum(CrowdSim):
         
 
         # use danger_zone to determine the condition for Danger
+        danger_cond_grp = dmingrp < self.discomfort_group_dist  # safe default
         if danger_zone == 'circle' or self.phase == 'train':
             danger_cond_grp = dmingrp < self.discomfort_group_dist
             danger_cond = dmin < self.discomfort_dist

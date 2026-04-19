@@ -15,6 +15,9 @@ from crowd_nav.policy.orca import ORCA
 from crowd_sim.envs.utils.state import *
 from crowd_sim.envs.utils.action import ActionRot, ActionXY
 from crowd_sim.envs.utils.recorder import Recoder
+from crowd_sim.envs.utils.realistic_human_modeling import (
+    sample_individual_speed, apply_f_formation, leader_follower_action
+)
 
 
 class CrowdSim(gym.Env):
@@ -128,9 +131,18 @@ class CrowdSim(gym.Env):
         self.discomfort_grp_penalty_factor = config.reward.discomfort_grp_penalty_factor
 
         # Group Configuration
-        self.num_groups = config.group.num_groups 
+        self.num_groups = config.group.num_groups
         self.min_size = config.group.min_size
         self.max_size = config.group.max_size
+
+        # Composition toggles (individuals vs. groups). Defaults preserve legacy mixed behaviour.
+        # We keep num_groups at its config value so obs shape remains stable for
+        # reloading trained policies; has_groups=False just leaves the groups empty.
+        self.has_individuals = getattr(config.sim, 'has_individuals', True)
+        self.has_groups = getattr(config.sim, 'has_groups', True)
+        if not self.has_individuals and not self.has_groups:
+            raise ValueError("sim.has_individuals and sim.has_groups cannot both be False")
+
         for i in range(self.num_groups):
             self.grp.append(Group(i, self.min_size, self.max_size))
         
@@ -229,13 +241,17 @@ class CrowdSim(gym.Env):
     def set_robot(self, robot):
         raise NotImplementedError
     
-    def initialize_human(self, current_human_num): 
+    def initialize_human(self, current_human_num):
         human = Human(self.config, 'humans')
         human.id = current_human_num
         human.set_group(self.get_group_id(human))
 
         if self.randomize_attributes:
-            human.sample_random_attributes() 
+            human.sample_random_attributes()
+
+        realistic = getattr(self.config, 'realistic', None)
+        if realistic is not None and realistic.enabled and realistic.use_speed_variation:
+            human.v_pref = sample_individual_speed(self.config)
         return human
 
 
@@ -246,29 +262,51 @@ class CrowdSim(gym.Env):
         :return: None
         """
      
-        if self.num_groups > 0:
+        if self.num_groups > 0 and self.has_groups:
             self.assign_group_centroids()
-            
-        # Generate humans with group behavior and randomness for individuals
-        for i in range(human_num):
-            
-            human = self.initialize_human(i)
-            
-            if human.group_id is not None:
-                # Check if the group already has a base position
-                grp = self.grp[human.group_id]
-                if not grp.check_validity():
-                    radii = np.random.uniform(self.group_min_radius, self.group_max_radius)
-                    self.grp[human.group_id].set_radius(radii)
-                    self.humans = self.grp[human.group_id].position_members(self.robot, self.humans)
-                
-                if not self.group_dynamic or grp.id == 0:
-                    human.isObstacle = True
 
+        # Phase 1: assign each human a group_id (or leave as individual).
+        # No positioning yet — this lets groups-only mode overflow cleanly
+        # past max_member without creating phantom un-positioned members.
+        pending = [self.initialize_human(i) for i in range(human_num)]
+
+        # Phase 2: position each non-empty group once, in order. Groups
+        # positioned earlier become collision obstacles for later groups.
+        realistic = getattr(self.config, "realistic", None)
+        use_group_speed = (realistic is not None and realistic.enabled
+                           and realistic.use_group_speed_factor)
+        available_types = getattr(self.config.group, 'types',
+                                  ['static_f', 'dynamic_lf', 'dynamic_free'])
+        for grp in self.grp:
+            if len(grp.members) == 0:
+                continue
+            radii = np.random.uniform(self.group_min_radius, self.group_max_radius)
+            grp.set_radius(radii)
+
+            # Assign a random behavior type to this group for the episode
+            grp.group_type = np.random.choice(available_types)
+
+            if grp.group_type == 'static_f':
+                # Phase C: F-formation layout, members don't move
+                self.humans = apply_f_formation(grp, self.robot, self.humans,
+                                                self.config)
+                for mem in grp.members:
+                    mem.isObstacle = True
             else:
-                
-                human = self.generate_circle_crossing_human(human)
-                # Random positioning for individuals
+                # dynamic_lf or dynamic_free: moving group, circle-crossing spawn
+                self.humans = grp.position_members(self.robot, self.humans)
+                if use_group_speed:
+                    # Phase B: Moussaid 2010 — walk at slowest member speed × factor
+                    group_v = realistic.group_speed_factor * min(
+                        m.v_pref for m in grp.members)
+                    for mem in grp.members:
+                        mem.v_pref = group_v
+
+        # Phase 3: place individuals (random circle-crossing spawn).
+        # Use the pre-initialized human directly to preserve v_pref and group_id.
+        for human in pending:
+            if human.group_id is None:
+                self._place_circle_crossing(human)
                 self.humans.append(human)
         
         # initial min separation distance to avoid danger penalty at beginning
@@ -276,28 +314,47 @@ class CrowdSim(gym.Env):
         #     self.humans.append(self.generate_circle_crossing_human(i))
     
     def assign_group_centroids(self):
-        """
-        Assign centroids to each group in the GroupList, positioning one group near the goal,
-        and the rest in non-overlapping random locations within the environment.
-        """
-        all_centroids = []  # Keep track of centroids to avoid overlap
-        min_distance = self.min_group_distance  # Minimum distance between group centroids to prevent collisions
+        """Place groups so the robot is likely to encounter them.
 
-        group_near_goal = 0
+        The first `num_on_path` groups are staggered along the robot→goal
+        vector at evenly-spaced fractions (e.g. 0.40 and 0.70 for 2 groups).
+        A small random lateral offset is added so groups aren’t always
+        perfectly on-axis. The remaining groups are placed randomly.
+        """
+        all_centroids = []
+        min_distance = self.min_group_distance
+        num_on_path = getattr(self.config.group, "num_on_path", 1)
 
-        # Iterate through each group in the group list
+        # Evenly space on-path fractions between 0.35 and 0.80 of the
+        # robot→goal segment so the robot traverses at least two groups.
+        if num_on_path == 1:
+            on_path_fractions = [0.60]
+        else:
+            step = (0.80 - 0.35) / (num_on_path - 1)
+            on_path_fractions = [0.35 + k * step for k in range(num_on_path)]
+
+        dx = self.robot.gx - self.robot.px
+        dy = self.robot.gy - self.robot.py
+        path_len = np.sqrt(dx * dx + dy * dy)
+        # Perpendicular unit vector for lateral offset
+        perp_x = -dy / (path_len + 1e-6)
+        perp_y =  dx / (path_len + 1e-6)
+
         for i, group in enumerate(self.grp):
-            if i == group_near_goal:
-                # Place this group near the goal position
-                fraction = 0.7  # Distance factor from robot to goal
-                base_x = self.robot.px + fraction * (self.robot.gx - self.robot.px)
-                base_y = self.robot.py + fraction * (self.robot.gy - self.robot.py)
-                group.set_centroid(base_x, base_y)
+            if i < num_on_path:
+                frac = on_path_fractions[i]
+                # Small lateral jitter (±0.5 m) keeps the group in the path
+                # but avoids stacking groups on the exact same line.
+                jitter = np.random.uniform(-0.5, 0.5)
+                cx = self.robot.px + frac * dx + jitter * perp_x
+                cy = self.robot.py + frac * dy + jitter * perp_y
+                # Clamp to arena
+                cx = float(np.clip(cx, -self.arena_size, self.arena_size))
+                cy = float(np.clip(cy, -self.arena_size, self.arena_size))
+                group.set_centroid(cx, cy)
             else:
-                # Set a non-overlapping centroid for this group
                 group.set_centroid(*self.generate_non_overlapping_centroid(all_centroids, min_distance))
-            
-            # Add the assigned centroid to the list to ensure future centroids don’t overlap
+
             all_centroids.append(group.centroid)
 
     
@@ -350,7 +407,33 @@ class CrowdSim(gym.Env):
         # human.set(px, py, px, py, 0, 0, 0)
         human.set(px, py, -px, -py, 0, 0, 0)
         return human
-    
+
+    def _place_circle_crossing(self, human):
+        """Place an already-initialized human on a circle-crossing path.
+
+        Unlike generate_circle_crossing_human this reuses the existing Human
+        object (preserving v_pref, group_id, id) and checks against all
+        currently placed agents including group members.
+        """
+        while True:
+            angle = np.random.random() * np.pi * 2
+            v_pref = 1.0 if human.v_pref == 0 else human.v_pref
+            px = self.circle_radius * np.cos(angle) + (np.random.random() - 0.5) * v_pref
+            py = self.circle_radius * np.sin(angle) + (np.random.random() - 0.5) * v_pref
+            collide = False
+            for i, agent in enumerate([self.robot] + self.humans):
+                if self.robot.kinematics == 'unicycle' and i == 0:
+                    min_dist = self.circle_radius / 2
+                else:
+                    min_dist = human.radius + agent.radius + self.discomfort_dist
+                if (norm((px - agent.px, py - agent.py)) < min_dist or
+                        norm((px - agent.gx, py - agent.gy)) < min_dist):
+                    collide = True
+                    break
+            if not collide:
+                break
+        human.set(px, py, -px, -py, 0, 0, 0)
+
     # def get_group_id(self, human):
     #     """
     #     Finds and returns the ID of a group with available capacity.
@@ -362,25 +445,30 @@ class CrowdSim(gym.Env):
     #             return grp.id
     #     return None
     def get_group_id(self, human):
+        """Assign this human to a group, or leave it as an individual.
+
+        Respects the two composition toggles:
+        - has_groups=False   → all humans are individuals (return None)
+        - has_individuals=False → every human is forced into a group; overflow
+          past total group capacity spills into group 0
+        - both True (default) → original mixed behaviour: fill groups in order,
+          any human past capacity becomes an individual
         """
-        Finds and returns the ID of a group with available capacity.
-        """
-        # Check if this is a groups-only scenario
-        if hasattr(self, 'groups_only') and self.groups_only:
-            # Force assignment to a group
-            for grp in self.grp:
-                if grp.check_validity():
-                    grp.add_member(human)
-                    return grp.id
-            # If no space, create overflow group (shouldn't happen if configured correctly)
-            return 0
-        
-        # Normal logic (some humans can be individuals)
+        if not self.has_groups:
+            return None
+
         for grp in self.grp:
             if grp.check_validity():
                 grp.add_member(human)
                 return grp.id
-        return None  # Individual
+
+        if not self.has_individuals:
+            # Every group is already at max_member but we cannot spawn individuals;
+            # distribute overflow round-robin into the smallest group.
+            target = min(self.grp, key=lambda g: len(g.members))
+            target.members.append(human)
+            return target.id
+        return None
 
 
     # update the robot belief of human states
@@ -729,6 +817,33 @@ class CrowdSim(gym.Env):
         return humans
 
 
+    def _enforce_separation(self, gap=0.02):
+        """Push any two overlapping humans apart so they never visually merge.
+
+        This is a position-level constraint projection applied after each step.
+        gap: minimum clearance beyond sum-of-radii to maintain (m).
+        """
+        humans = self.humans
+        n = len(humans)
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = humans[i], humans[j]
+                if a.isObstacle and b.isObstacle:
+                    continue
+                dx = a.px - b.px
+                dy = a.py - b.py
+                dist = np.sqrt(dx * dx + dy * dy) + 1e-9
+                min_dist = a.radius + b.radius + gap
+                if dist < min_dist:
+                    push = (min_dist - dist) / 2.0
+                    nx, ny = dx / dist, dy / dist
+                    if not a.isObstacle:
+                        a.px += push * nx
+                        a.py += push * ny
+                    if not b.isObstacle:
+                        b.px -= push * nx
+                        b.py -= push * ny
+
     # calculate the reward at current timestep R(s, a)
     def calc_reward(self, action):
         # collision detection
@@ -833,7 +948,11 @@ class CrowdSim(gym.Env):
             # observation for humans is always coordinates
             if human.group_id is not None:
                 group_to_member_ids[human.group_id].append(human)
-            
+
+        realistic = getattr(self.config, "realistic", None)
+        use_lf = (realistic is not None and realistic.enabled
+                  and realistic.use_leader_follower)
+
         for i, human in enumerate(self.humans):
             ob = []
             for other_human in self.humans:
@@ -849,8 +968,25 @@ class CrowdSim(gym.Env):
                     ob += [self.robot.get_observable_state()]
                 else:
                     ob += [self.dummy_robot.get_observable_state()]
-            
-            if human.group_id is not None: 
+
+            # Phase D: leader-follower for dynamic_lf groups
+            if (use_lf and human.group_id is not None and not human.isObstacle):
+                grp = self.grp[human.group_id]
+                if getattr(grp, 'group_type', None) == 'dynamic_lf':
+                    leader = grp.members[0] if grp.members else None
+                    if leader is not None and human is not leader:
+                        from crowd_sim.envs.utils.action import ActionXY
+                        # rank: position in follower list (0 = first follower)
+                        followers = [m for m in grp.members if m is not leader]
+                        rank = followers.index(human) if human in followers else 0
+                        siblings = [m for m in grp.members if m is not human]
+                        vx, vy = leader_follower_action(
+                            human, leader, self.config,
+                            rank=rank, siblings=siblings)
+                        human_actions.append(ActionXY(vx, vy))
+                        continue
+
+            if human.group_id is not None:
                 human_actions.append(human.act(ob, group_to_member_ids[human.group_id]))
             else:
                 human_actions.append(human.act(ob))

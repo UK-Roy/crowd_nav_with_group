@@ -171,6 +171,10 @@ class CrowdSimPred(CrowdSimVarNum):
             self.humans[i].step(human_action)
             self.cur_human_states[i] = np.array([self.humans[i].px, self.humans[i].py, self.humans[i].radius])
 
+        # keep group geometry and separation consistent across all env subclasses
+        self._update_group_hulls()
+        self._enforce_separation()
+
         self.global_time += self.time_step # max episode length=time_limit/time_step
         self.step_counter = self.step_counter+1
 
