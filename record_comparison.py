@@ -1,28 +1,41 @@
 """
-Record and compare multiple navigation policies on identical scenarios.
+Record and compare navigation policies on identical scenarios.
 
-Each policy is run on the same seeds so group types, positions, and crowd
-behaviour are bit-for-bit identical — the only variable is the robot policy.
+Supports:
+  - Classical policies (ORCA, Social Force, Zone-based, F-formation)
+  - Neural network policies loaded from checkpoints (GARN, DS-RNN/GRAM, etc.)
+  - Each classical/neural policy optionally wrapped with TAGA (+taga variant)
+  - GARN is never wrapped with TAGA (it has its own group-awareness)
+
+Policy config is defined in POLICY_REGISTRY at the bottom of this file.
+Each entry specifies: display name, policy key, optional model_dir,
+and whether to also produce a TAGA variant.
 
 Usage:
-    # Record ORCA vs Social Force on 3 seeds
-    python record_comparison.py --policies orca,social_force --seeds 0,1,2
+    # All registered policies (defined below)
+    python record_comparison.py --seeds 0,1,2
 
-    # Single policy, single seed (same as record_episode.py but with metrics)
-    python record_comparison.py --policies orca --seeds 3
+    # Subset by name
+    python record_comparison.py --policies orca,orca+taga,garn --seeds 0,1,2
 
-    # High-quality + all baseline policies
-    python record_comparison.py --policies orca,social_force,zone_based,f_formation --seeds 0,1 --dpi 200
+    # High quality, more seeds
+    python record_comparison.py --seeds 0,1,2,3,4 --dpi 200 --fps 15
 
-Output per policy×seed:
-    videos/<policy>_seed<N>.mp4   — video
-    results/metrics.csv           — aggregated metrics table
+    # Metrics only (fast, no video rendering)
+    python record_comparison.py --seeds 0,1,2,3,4 --no-video
+
+Output:
+    videos/<policy_label>_seed<N>.mp4   — paper-quality video
+    results/metrics.csv                  — SR, CR, GCR, reward per run
+    (summary table printed to terminal)
 """
 import sys, argparse, os, csv, copy
 sys.path.insert(0, '.')
 sys.path.insert(0, 'crowd_nav')
 
 import numpy as np
+import torch
+import torch.nn as nn
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -32,47 +45,181 @@ from matplotlib.animation import FFMpegWriter
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
-parser.add_argument('--policies',   default='orca,social_force',
-                    help='Comma-separated policy names from policy_factory')
-parser.add_argument('--seeds',      default='0,1,2',
-                    help='Comma-separated seeds (same seed = identical scenario)')
-parser.add_argument('--max-steps',  type=int, default=300)
-parser.add_argument('--fps',        type=int, default=10)
-parser.add_argument('--dpi',        type=int, default=150)
+parser.add_argument('--policies',  default=None,
+                    help='Comma-separated policy labels to run (default: all in registry)')
+parser.add_argument('--seeds',     default='0,1,2',
+                    help='Comma-separated integer seeds')
+parser.add_argument('--max-steps', type=int, default=300)
+parser.add_argument('--fps',       type=int, default=10)
+parser.add_argument('--dpi',       type=int, default=150)
+parser.add_argument('--no-video',  action='store_true')
 parser.add_argument('--group-types', default='static_f,dynamic_lf,dynamic_free')
-parser.add_argument('--no-video',   action='store_true',
-                    help='Skip video recording, only collect metrics')
 args = parser.parse_args()
 
-POLICIES = [p.strip() for p in args.policies.split(',')]
-SEEDS    = [int(s.strip()) for s in args.seeds.split(',')]
-
+SEEDS = [int(s.strip()) for s in args.seeds.split(',')]
 os.makedirs('videos',  exist_ok=True)
 os.makedirs('results', exist_ok=True)
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Policy registry ───────────────────────────────────────────────────────────
+# Each entry:
+#   label      : short name used in filenames and table headers
+#   policy_key : key in config.robot.policy (also in policy_factory)
+#   model_dir  : path to trained checkpoint dir (None for classical)
+#   with_taga  : if True, also produce a "<label>+taga" variant
+#
+# ADD NEW POLICIES HERE — no other code changes needed.
+POLICY_REGISTRY = [
+    dict(label='orca',           policy_key='orca',                    model_dir=None,
+         with_taga=True),
+    dict(label='social_force',   policy_key='social_force',            model_dir=None,
+         with_taga=True),
+    dict(label='zone_based',     policy_key='zone_based',              model_dir=None,
+         with_taga=True),
+    dict(label='f_formation',    policy_key='f_formation',             model_dir=None,
+         with_taga=True),
+    dict(label='ds_rnn',         policy_key='selfAttn_merge_srnn',
+         model_dir='trained_models/GST_predictor_rand',                with_taga=True),
+    dict(label='gram',           policy_key='selfAttn_merge_srnn_grpAttn',
+         model_dir='trained_models/GST_predictor_rand',                with_taga=True),
+    dict(label='garn',           policy_key='garn',
+         model_dir='trained_models/garn_realistic',                    with_taga=False),
+]
+
+# ── Filter registry by --policies flag ───────────────────────────────────────
+def expand_registry(registry):
+    """Expand each entry into base + optional TAGA variant."""
+    entries = []
+    for r in registry:
+        entries.append(dict(label=r['label'], policy_key=r['policy_key'],
+                            model_dir=r['model_dir'], use_taga=False))
+        if r['with_taga']:
+            entries.append(dict(label=r['label'] + '+taga', policy_key=r['policy_key'],
+                                model_dir=r['model_dir'], use_taga=True))
+    return entries
+
+ALL_ENTRIES = expand_registry(POLICY_REGISTRY)
+
+if args.policies:
+    wanted = {p.strip() for p in args.policies.split(',')}
+    ALL_ENTRIES = [e for e in ALL_ENTRIES if e['label'] in wanted]
+    missing = wanted - {e['label'] for e in ALL_ENTRIES}
+    if missing:
+        print(f"Warning: unknown policies requested: {missing}")
+        print(f"Available: {[e['label'] for e in ALL_ENTRIES]}")
+
+print(f"Running {len(ALL_ENTRIES)} policy variants × {len(SEEDS)} seeds")
+
+# ── Imports ───────────────────────────────────────────────────────────────────
 from crowd_nav.configs.config import Config
 from crowd_sim.envs.crowd_sim_var_num import CrowdSimVarNum
 from crowd_sim.envs.utils.robot import Robot
 from crowd_sim.envs.utils.state import JointState
 from crowd_nav.policy.policy_factory import policy_factory
+from crowd_nav.policy.taga_safety import TAGASafetyController
+from rl.networks.model import Policy as NetPolicy
 
-GROUP_COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4']
-TYPE_HATCH   = {'static_f': '///', 'dynamic_lf': '', 'dynamic_free': '...'}
-TYPE_LABEL   = {'static_f': 'Static F-form', 'dynamic_lf': 'Dynamic LF',
-                'dynamic_free': 'Dynamic Free'}
+# ── Neural network loader ─────────────────────────────────────────────────────
+def load_neural_policy(model_dir, config, device):
+    """Load a trained actor-critic checkpoint from model_dir."""
+    import importlib, glob
 
-# ── Build policy ──────────────────────────────────────────────────────────────
-def make_policy(name, config):
-    cls = policy_factory.get(name)
+    # Load the training-time arguments
+    arg_module = importlib.import_module(model_dir.replace('/', '.') + '.arguments')
+    algo_args  = arg_module.get_args()
+
+    # Find latest checkpoint if not specified
+    ckpt_dir = os.path.join(model_dir, 'checkpoints')
+    ckpts = sorted(glob.glob(os.path.join(ckpt_dir, '*.pt')))
+    if not ckpts:
+        raise FileNotFoundError(f"No checkpoints found in {ckpt_dir}")
+    load_path = ckpts[-1]
+    print(f"    Loading checkpoint: {os.path.basename(load_path)}")
+
+    actor_critic = NetPolicy(
+        config.robot.policy,
+        config,
+        algo_args,
+    )
+    actor_critic.load_state_dict(torch.load(load_path, map_location=device))
+    actor_critic.base.nenv = 1
+    actor_critic = nn.DataParallel(actor_critic).to(device)
+    actor_critic.eval()
+    return actor_critic, algo_args
+
+# ── Classical policy loader ───────────────────────────────────────────────────
+def load_classical_policy(policy_key, config):
+    cls = policy_factory.get(policy_key)
     if cls is None:
-        raise ValueError(f"Unknown policy '{name}'. Available: {list(policy_factory.keys())}")
+        raise ValueError(f"Unknown policy '{policy_key}'")
     p = cls(config)
     if hasattr(p, 'time_step'):
         p.time_step = config.env.time_step
     return p
 
+# ── TAGA action computation ───────────────────────────────────────────────────
+def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
+    """Blend base_action with TAGA tangent when robot is near a group."""
+    import torch
+    from crowd_sim.envs.utils.action import ActionXY
+
+    taga_cfg = config.taga
+    v_pref   = robot.v_pref
+
+    centroids = env.group_centroids or []
+    radii     = env.group_radii    or []
+
+    if not centroids:
+        return ActionXY(*base_action_np)
+
+    rx, ry = robot.px, robot.py
+    gx, gy = robot.gx, robot.gy
+    d_robot_goal = np.hypot(gx - rx, gy - ry)
+
+    best_action = base_action_np.copy()
+    for centroid, radius in zip(centroids, radii):
+        cx, cy = (centroid[0], centroid[1]) if hasattr(centroid, '__len__') else centroid
+        d_centroid = np.hypot(cx - rx, cy - ry)
+
+        if d_robot_goal < taga_cfg.goal_threshold and d_robot_goal < d_centroid:
+            continue
+
+        d_switch = radius + taga_cfg.safe_margin
+        if taga_cfg.smooth_switching:
+            band  = taga_cfg.switch_band
+            alpha = np.clip((d_switch + band - d_centroid) / (2 * band), 0.0, 1.0)
+        else:
+            alpha = 1.0 if d_centroid < d_switch else 0.0
+
+        if alpha < 1e-3:
+            continue
+
+        dx, dy = cx - rx, cy - ry
+        perp_cw  = np.array([ dy, -dx])
+        perp_ccw = np.array([-dy,  dx])
+        norm_cw  = np.linalg.norm(perp_cw)  + 1e-9
+        norm_ccw = np.linalg.norm(perp_ccw) + 1e-9
+        cw_tang  = perp_cw  / norm_cw
+        ccw_tang = perp_ccw / norm_ccw
+
+        goal_dir = np.array([gx - rx, gy - ry])
+        goal_dir /= (np.linalg.norm(goal_dir) + 1e-9)
+        cw_angle  = np.arccos(np.clip(np.dot(cw_tang,  goal_dir), -1, 1))
+        ccw_angle = np.arccos(np.clip(np.dot(ccw_tang, goal_dir), -1, 1))
+        tangent   = cw_tang if cw_angle < ccw_angle else ccw_tang
+
+        taga_action = tangent * v_pref
+        desired = alpha * taga_action + (1.0 - alpha) * base_action_np
+        obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device) if obs is not None else None
+        best_action = safety_ctrl.get_safe_taga_action(obs_tensor, desired, device)
+
+    return ActionXY(*best_action) if not isinstance(best_action, type(ActionXY(0,0))) else best_action
+
 # ── Render helpers ────────────────────────────────────────────────────────────
+GROUP_COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4']
+TYPE_HATCH   = {'static_f': '///', 'dynamic_lf': '', 'dynamic_free': '...'}
+TYPE_LABEL   = {'static_f': 'Static F-form', 'dynamic_lf': 'Dynamic LF',
+                'dynamic_free': 'Dynamic Free'}
+
 def make_figure():
     fig, ax = plt.subplots(figsize=(7, 7))
     fig.patch.set_facecolor('white')
@@ -94,13 +241,11 @@ def clear_frame(ax):
     drawn.clear()
     for t in list(ax.texts): t.remove()
 
-def draw_state(ax, env, robot, config, step_num, reward, done, policy_name):
+def draw_state(ax, env, robot, config, step_num, reward, done, label):
     clear_frame(ax)
-    # goal
     s, = ax.plot(robot.gx, robot.gy, marker='*', color='red',
                  markersize=14, linestyle='None', zorder=10)
     drawn.append(s)
-    # robot
     rc = plt.Circle((robot.px, robot.py), robot.radius,
                     facecolor='gold', edgecolor='black', linewidth=1.2, zorder=8)
     ax.add_patch(rc); drawn.append(rc)
@@ -110,15 +255,13 @@ def draw_state(ax, env, robot, config, step_num, reward, done, policy_name):
         arr = ax.annotate('', xy=(robot.px + 0.45*np.cos(theta),
                                    robot.py + 0.45*np.sin(theta)),
                           xytext=(robot.px, robot.py),
-                          arrowprops=dict(arrowstyle='->', color='black', lw=1.5),
-                          zorder=9)
+                          arrowprops=dict(arrowstyle='->', color='black', lw=1.5), zorder=9)
         drawn.append(arr)
-    # humans
     for h in env.humans:
         gid = getattr(h, 'group_id', None)
         if gid is not None:
             color = GROUP_COLORS[gid % len(GROUP_COLORS)]
-            grp = env.grp[gid] if gid < len(env.grp) else None
+            grp   = env.grp[gid] if gid < len(env.grp) else None
             hatch = TYPE_HATCH.get(getattr(grp, 'group_type', ''), '') if grp else ''
             c = plt.Circle((h.px, h.py), h.radius, facecolor=color, alpha=0.75,
                             hatch=hatch, edgecolor='black', linewidth=0.8, zorder=5)
@@ -128,12 +271,10 @@ def draw_state(ax, env, robot, config, step_num, reward, done, policy_name):
         ax.add_patch(c); drawn.append(c)
         if np.hypot(h.vx, h.vy) > 0.05 and not h.isObstacle:
             th = np.arctan2(h.vy, h.vx)
-            a = ax.annotate('', xy=(h.px+0.35*np.cos(th), h.py+0.35*np.sin(th)),
-                            xytext=(h.px, h.py),
-                            arrowprops=dict(arrowstyle='->', color='dimgray', lw=0.9),
-                            zorder=6)
+            a  = ax.annotate('', xy=(h.px+0.35*np.cos(th), h.py+0.35*np.sin(th)),
+                             xytext=(h.px, h.py),
+                             arrowprops=dict(arrowstyle='->', color='dimgray', lw=0.9), zorder=6)
             drawn.append(a)
-    # group hulls
     for gid, hull in (env.group_hulls or {}).items():
         color = GROUP_COLORS[gid % len(GROUP_COLORS)]
         if hull._kind == 'polygon':
@@ -144,14 +285,14 @@ def draw_state(ax, env, robot, config, step_num, reward, done, policy_name):
             hc = plt.Circle(hull.centroid, hull.bounding_radius, fill=False,
                             edgecolor=color, linestyle='--', linewidth=1.8, zorder=7)
             ax.add_patch(hc); drawn.append(hc)
-    # info overlay
     status = 'DONE' if done else f'r={reward:+.3f}'
     t = ax.text(0.02, 0.98,
                 f't={step_num*config.env.time_step:.1f}s  step={step_num}  {status}',
                 transform=ax.transAxes, fontsize=9, va='top',
                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
     drawn.append(t)
-    ax.set_title(f'Policy: {policy_name.upper()}', fontsize=12, fontweight='bold')
+    taga_flag = ' [+TAGA]' if '+taga' in label else ''
+    ax.set_title(f'Policy: {label.upper()}{taga_flag}', fontsize=12, fontweight='bold')
 
 def build_legend(ax, env):
     handles = [
@@ -163,118 +304,164 @@ def build_legend(ax, env):
     for g in env.grp:
         if g.members:
             color = GROUP_COLORS[g.id % len(GROUP_COLORS)]
-            lbl = f"Grp {g.id}: {TYPE_LABEL.get(g.group_type, g.group_type)}"
-            handles.append(mpatches.Patch(
-                facecolor=color, alpha=0.7,
-                hatch=TYPE_HATCH.get(g.group_type, ''),
-                edgecolor='black', label=lbl))
+            lbl   = f"Grp {g.id}: {TYPE_LABEL.get(g.group_type, g.group_type)}"
+            handles.append(mpatches.Patch(facecolor=color, alpha=0.7,
+                hatch=TYPE_HATCH.get(g.group_type,''), edgecolor='black', label=lbl))
     ax.legend(handles=handles, loc='upper right', fontsize=7.5,
               framealpha=0.85, edgecolor='gray')
 
-# ── Metrics tracking ──────────────────────────────────────────────────────────
+# ── GCR ───────────────────────────────────────────────────────────────────────
 def compute_gcr(robot, env):
-    """Fraction of group hulls the robot is currently inside."""
     rp = np.array([robot.px, robot.py])
-    if not env.group_hulls:
-        return 0
-    return sum(1 for h in env.group_hulls.values() if h.contains(rp))
+    return sum(1 for h in (env.group_hulls or {}).values() if h.contains(rp))
+
+# ── Hidden state helpers for neural policies ──────────────────────────────────
+def init_hidden(actor_critic, device):
+    base  = actor_critic.module.base
+    node_num = 1
+    edge_num = base.human_num + 1
+    return {
+        'human_node_rnn':       torch.zeros(1, node_num, base.human_node_rnn_size, device=device),
+        'human_human_edge_rnn': torch.zeros(1, edge_num, base.human_human_edge_rnn_size, device=device),
+    }
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
+device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 all_metrics = []
 
-for policy_name in POLICIES:
-    print(f"\n{'='*50}")
-    print(f"Policy: {policy_name.upper()}")
-    print(f"{'='*50}")
+for entry in ALL_ENTRIES:
+    label      = entry['label']
+    policy_key = entry['policy_key']
+    model_dir  = entry['model_dir']
+    use_taga   = entry['use_taga']
+    is_neural  = model_dir is not None
 
-    for seed in SEEDS:
-        config = Config()
-        config.sim.predict_method = 'none'
-        config.env.use_wrapper = False
-        config.group.types = args.group_types.split(',')
+    print(f"\n{'='*55}")
+    print(f"Policy: {label.upper()}")
+    print(f"{'='*55}")
 
-        env = CrowdSimVarNum()
-        env.configure(config)
-        robot = Robot(config, 'robot')
-
+    # Load neural model once (reused across seeds)
+    actor_critic = None
+    algo_args    = None
+    if is_neural:
+        if not os.path.isdir(model_dir):
+            print(f"  SKIP — model_dir not found: {model_dir}")
+            continue
         try:
-            pol = make_policy(policy_name, config)
+            # Load config from model dir
+            import importlib
+            cfg_mod    = importlib.import_module(model_dir.replace('/', '.') + '.configs.config')
+            run_config = cfg_mod.Config()
+            actor_critic, algo_args = load_neural_policy(model_dir, run_config, device)
         except Exception as e:
-            print(f"  Skipping {policy_name}: {e}")
+            print(f"  SKIP — failed to load: {e}")
             continue
 
-        robot.policy = pol
-        robot.kinematics = config.action_space.kinematics
+    for seed in SEEDS:
+        # Fresh config and env per seed so RNG is identical across policies
+        config = Config()
+        config.sim.predict_method = 'none'
+        config.env.use_wrapper    = False
+        config.group.types        = args.group_types.split(',')
+        config.robot.policy       = policy_key
+
+        env    = CrowdSimVarNum()
+        env.configure(config)
+        robot  = Robot(config, 'robot')
         env.set_robot(robot)
         env.thisSeed = seed
-        env.nenv = 1
-        env.phase = 'test'
+        env.nenv     = 1
+        env.phase    = 'test'
+
+        # Policy
+        if is_neural:
+            robot.policy      = actor_critic  # stored for reference; actions computed below
+            robot.kinematics  = config.action_space.kinematics
+            hidden            = None          # initialised after reset
+        else:
+            pol               = load_classical_policy(policy_key, config)
+            robot.policy      = pol
+            robot.kinematics  = config.action_space.kinematics
+
+        # TAGA controller
+        safety_ctrl = TAGASafetyController(config) if use_taga else None
 
         obs = env.reset()
         print(f"  Seed {seed} | groups: {[(g.id, g.group_type) for g in env.grp if g.members]}")
 
-        # metric accumulators
+        if is_neural:
+            hidden = init_hidden(actor_critic, device)
+
+        # Metrics
         total_reward = 0.0
-        gcr_steps    = 0      # steps robot is inside any group hull
+        gcr_steps    = 0
         collisions   = 0
         success      = False
         timeout      = False
         n_steps      = 0
 
-        # video setup
-        vid_path = f"videos/{policy_name}_seed{seed}.mp4"
+        # Video
+        vid_path = f"videos/{label}_seed{seed}.mp4"
         if not args.no_video:
             fig, ax = make_figure()
             build_legend(ax, env)
-            writer = FFMpegWriter(fps=args.fps, codec='libx264', bitrate=4000,
-                                  extra_args=['-pix_fmt', 'yuv420p',
-                                              '-crf', '18', '-preset', 'slow'])
+            writer     = FFMpegWriter(fps=args.fps, codec='libx264', bitrate=4000,
+                                      extra_args=['-pix_fmt','yuv420p','-crf','18','-preset','slow'])
             writer_ctx = writer.saving(fig, vid_path, dpi=args.dpi)
             writer_ctx.__enter__()
-            draw_state(ax, env, robot, config, 0, 0.0, False, policy_name)
+            draw_state(ax, env, robot, config, 0, 0.0, False, label)
             writer.grab_frame()
 
         for step in range(1, args.max_steps + 1):
-            state = JointState(
-                robot.get_full_state(),
-                [env.humans[i].get_observable_state() for i in range(env.human_num)])
-            action = pol.predict(state)
-            ob, reward, done, info = env.step(action)
+            # ── Compute base action ──────────────────────────────────────────
+            if is_neural:
+                obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device)
+                masks       = torch.zeros(1, 1, device=device)
+                with torch.no_grad():
+                    _, action_tensor, _, hidden = actor_critic(
+                        obs_tensor, hidden, masks)
+                base_action_np = action_tensor.squeeze().cpu().numpy()
+            else:
+                state          = JointState(robot.get_full_state(),
+                    [env.humans[i].get_observable_state() for i in range(env.human_num)])
+                base_act       = pol.predict(state)
+                base_action_np = np.array([base_act.vx, base_act.vy])
+
+            # ── Apply TAGA if enabled ────────────────────────────────────────
+            if use_taga and safety_ctrl is not None:
+                obs_for_taga = obs if is_neural else None
+                final_action = apply_taga(obs_for_taga, base_action_np,
+                                          robot, env, safety_ctrl, config, device)
+            else:
+                from crowd_sim.envs.utils.action import ActionXY
+                final_action = ActionXY(*base_action_np)
+
+            ob, reward, done, info = env.step(final_action)
+            obs = ob
 
             total_reward += reward
             n_steps      += 1
             gcr_steps    += compute_gcr(robot, env)
 
-            info_obj = info['info']
-            if hasattr(info_obj, '__class__'):
-                cls = info_obj.__class__.__name__
-                if cls == 'Collision':
-                    collisions += 1
-                elif cls == 'ReachGoal':
-                    success = True
-                elif cls == 'Timeout':
-                    timeout = True
+            cls = info['info'].__class__.__name__
+            if cls == 'Collision':   collisions += 1
+            elif cls == 'ReachGoal': success     = True
+            elif cls == 'Timeout':   timeout     = True
 
             if not args.no_video:
-                draw_state(ax, env, robot, config, step, reward, done, policy_name)
+                draw_state(ax, env, robot, config, step, reward, done, label)
                 writer.grab_frame()
 
             if done:
                 if not args.no_video:
-                    for _ in range(args.fps):  # hold 1 s
-                        writer.grab_frame()
+                    for _ in range(args.fps): writer.grab_frame()
                 break
 
-        # GCR = fraction of steps robot was inside a group
         gcr = gcr_steps / max(n_steps, 1)
-
-        result = dict(
-            policy=policy_name, seed=seed,
-            success=int(success), collision=int(collisions > 0),
-            timeout=int(timeout), n_steps=n_steps,
-            total_reward=round(total_reward, 3),
-            gcr=round(gcr, 4),
-        )
+        result = dict(policy=label, seed=seed, success=int(success),
+                      collision=int(collisions > 0), timeout=int(timeout),
+                      n_steps=n_steps, total_reward=round(total_reward, 3),
+                      gcr=round(gcr, 4))
         all_metrics.append(result)
         print(f"    → success={success}  collisions={collisions}  "
               f"steps={n_steps}  GCR={gcr:.3f}  reward={total_reward:.2f}")
@@ -285,23 +472,26 @@ for policy_name in POLICIES:
             print(f"    Saved: {vid_path}")
 
 # ── Write CSV ─────────────────────────────────────────────────────────────────
-csv_path = 'results/metrics.csv'
 if all_metrics:
+    csv_path = 'results/metrics.csv'
     with open(csv_path, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=all_metrics[0].keys())
         w.writeheader()
         w.writerows(all_metrics)
     print(f"\nMetrics saved → {csv_path}")
 
-    # Print summary table
-    print(f"\n{'Policy':<20} {'SR':>5} {'CR':>5} {'Avg Steps':>10} {'Avg GCR':>9} {'Avg Reward':>11}")
-    print('-' * 65)
-    for pol in POLICIES:
-        rows = [r for r in all_metrics if r['policy'] == pol]
+    print(f"\n{'Policy':<25} {'SR':>5} {'CR':>5} {'Avg Steps':>10} {'Avg GCR':>9} {'Avg Reward':>11}")
+    print('-' * 70)
+    seen = []
+    for entry in ALL_ENTRIES:
+        lbl  = entry['label']
+        if lbl in seen: continue
+        seen.append(lbl)
+        rows = [r for r in all_metrics if r['policy'] == lbl]
         if not rows: continue
-        sr  = np.mean([r['success']      for r in rows])
-        cr  = np.mean([r['collision']    for r in rows])
-        st  = np.mean([r['n_steps']      for r in rows])
-        gcr = np.mean([r['gcr']          for r in rows])
-        rew = np.mean([r['total_reward'] for r in rows])
-        print(f"{pol:<20} {sr:>5.2f} {cr:>5.2f} {st:>10.1f} {gcr:>9.4f} {rew:>11.2f}")
+        print(f"{lbl:<25} "
+              f"{np.mean([r['success']      for r in rows]):>5.2f} "
+              f"{np.mean([r['collision']    for r in rows]):>5.2f} "
+              f"{np.mean([r['n_steps']      for r in rows]):>10.1f} "
+              f"{np.mean([r['gcr']          for r in rows]):>9.4f} "
+              f"{np.mean([r['total_reward'] for r in rows]):>11.2f}")
