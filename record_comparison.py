@@ -111,14 +111,102 @@ print(f"Running {len(ALL_ENTRIES)} policy variants × {len(SEEDS)} seeds")
 # ── Imports ───────────────────────────────────────────────────────────────────
 from crowd_nav.configs.config import Config
 from crowd_sim.envs.crowd_sim_var_num import CrowdSimVarNum
+from crowd_sim.envs.crowd_sim_pred import CrowdSimPred
+from crowd_sim.envs.crowd_sim_pred_real_gst import CrowdSimPredRealGST
 from crowd_sim.envs.utils.robot import Robot
 from crowd_sim.envs.utils.state import JointState
 from crowd_nav.policy.policy_factory import policy_factory
 from crowd_nav.policy.taga_safety import TAGASafetyController
 from rl.networks.model import Policy as NetPolicy
 
+
+# ── Standalone GST predictor (replaces VecPretextNormalize for single-env use) ─
+class GSTPredictor:
+    """Run the GST trajectory predictor for a single env without VecPretextNormalize."""
+
+    def __init__(self, config, device):
+        import pickle
+        from collections import deque
+        from gst_updated.src.gumbel_social_transformer.temperature_scheduler import Temp_Scheduler
+        from gst_updated.scripts.wrapper.crowd_nav_interface_parallel import CrowdNavPredInterfaceMultiEnv
+
+        self.config = config
+        self.device = device
+        self.max_human_num = config.sim.human_num + config.sim.human_num_range
+        self._deque_cls = deque
+
+        load_path = os.path.join(os.getcwd(), config.pred.model_dir)
+        checkpoint_dir = os.path.join(load_path, 'checkpoint')
+        with open(os.path.join(checkpoint_dir, 'args.pickle'), 'rb') as f:
+            self.gst_args = pickle.load(f)
+
+        self.predictor = CrowdNavPredInterfaceMultiEnv(
+            load_path=load_path, device=device, config=self.gst_args, num_env=1)
+
+        temp_sched = Temp_Scheduler(
+            self.gst_args.num_epochs, self.gst_args.init_temp,
+            self.gst_args.init_temp, temp_min=0.03)
+        self.tau = temp_sched.decay_whole_process(epoch=100)
+
+        self.pred_interval = int(config.data.pred_timestep // config.env.time_step)
+        self.buffer_len = (self.gst_args.obs_seq_len - 1) * self.pred_interval + 1
+
+    def reset(self):
+        deque = self._deque_cls
+        self.traj_buffer = deque(
+            list(-torch.ones((self.buffer_len, 1, self.max_human_num, 2),
+                             device=self.device) * 999),
+            maxlen=self.buffer_len)
+        self.mask_buffer = deque(
+            list(torch.zeros((self.buffer_len, 1, self.max_human_num, 1),
+                             dtype=torch.bool, device=self.device)),
+            maxlen=self.buffer_len)
+
+    def process(self, O):
+        """O: raw numpy obs dict. Returns updated dict with GST-filled spatial_edges."""
+        robot_node_t = torch.tensor(
+            np.array(O['robot_node']).reshape(1, 7),
+            dtype=torch.float32, device=self.device).unsqueeze(0)      # (1, 1, 7)
+        spatial_edges_t = torch.tensor(
+            np.array(O['spatial_edges']),
+            dtype=torch.float32, device=self.device).unsqueeze(0)      # (1, max_human_num, 12)
+        visible_masks_t = torch.tensor(
+            np.array(O['visible_masks']),
+            dtype=torch.bool, device=self.device).unsqueeze(0)         # (1, max_human_num)
+
+        human_pos = robot_node_t[:, :, :2] + spatial_edges_t[:, :, :2]  # (1, max_human_num, 2)
+        self.traj_buffer.append(human_pos)
+        self.mask_buffer.append(visible_masks_t.unsqueeze(-1))
+
+        in_traj = torch.stack(list(self.traj_buffer)).permute(1, 2, 0, 3)
+        in_mask = torch.stack(list(self.mask_buffer)).permute(1, 2, 0, 3).float()
+        in_traj = in_traj[:, :, ::self.pred_interval]
+        in_mask = in_mask[:, :, ::self.pred_interval]
+
+        with torch.no_grad():
+            out_traj, out_mask = self.predictor.forward(
+                input_traj=in_traj, input_binary_mask=in_mask)
+        out_mask = out_mask.bool()
+
+        robot_pos = robot_node_t[:, :, :2].unsqueeze(1)                # (1, 1, 1, 2)
+        out_traj[:, :, :, :2] -= robot_pos
+
+        predict_steps = self.config.sim.predict_steps
+        out_mask_rep = out_mask.repeat(1, 1, predict_steps * 2)
+        new_spatial = out_traj[:, :, :, :2].reshape(1, self.max_human_num, -1)
+        spatial_edges_t[:, :, 2:][out_mask_rep] = new_spatial[out_mask_rep]
+
+        # sort humans by distance to robot
+        hr_dist = torch.linalg.norm(spatial_edges_t[:, :, :2], dim=-1)
+        sorted_idx = torch.argsort(hr_dist, dim=1)
+        spatial_edges_t[0] = spatial_edges_t[0][sorted_idx[0]]
+
+        O_updated = dict(O)
+        O_updated['spatial_edges'] = spatial_edges_t.squeeze(0).cpu().numpy()
+        return O_updated
+
 # ── Neural network loader ─────────────────────────────────────────────────────
-def load_neural_policy(model_dir, config, device):
+def load_neural_policy(model_dir, policy_key, config, device):
     """Load a trained actor-critic checkpoint from model_dir."""
     import importlib, glob
 
@@ -126,7 +214,13 @@ def load_neural_policy(model_dir, config, device):
     arg_module = importlib.import_module(model_dir.replace('/', '.') + '.arguments')
     algo_args  = arg_module.get_args()
 
-    # Find latest checkpoint if not specified
+    # Override env_name with the value actually used at training time (saved by train.py)
+    env_name_path = os.path.join(model_dir, 'env_name.txt')
+    if os.path.isfile(env_name_path):
+        with open(env_name_path) as _f:
+            algo_args.env_name = _f.read().strip()
+
+    # Find latest checkpoint
     ckpt_dir = os.path.join(model_dir, 'checkpoints')
     ckpts = sorted(glob.glob(os.path.join(ckpt_dir, '*.pt')))
     if not ckpts:
@@ -134,14 +228,26 @@ def load_neural_policy(model_dir, config, device):
     load_path = ckpts[-1]
     print(f"    Loading checkpoint: {os.path.basename(load_path)}")
 
+    # Build a fresh config for the throwaway env (neural policies need CrowdSimPred)
+    tmp_cfg = Config()
+    tmp_cfg.robot.policy        = policy_key
+    tmp_cfg.sim.predict_method  = 'const_vel'
+    tmp_cfg.env.use_wrapper     = False
+
+    tmp_env = CrowdSimPred()
+    tmp_env.configure(tmp_cfg)
+    tmp_robot = Robot(tmp_cfg, 'robot')
+    tmp_env.set_robot(tmp_robot)
+
     actor_critic = NetPolicy(
-        config.robot.policy,
-        config,
-        algo_args,
+        tmp_env.observation_space.spaces,
+        tmp_env.action_space,
+        base=policy_key,
+        base_kwargs=algo_args,
     )
     actor_critic.load_state_dict(torch.load(load_path, map_location=device))
     actor_critic.base.nenv = 1
-    actor_critic = nn.DataParallel(actor_critic).to(device)
+    actor_critic = actor_critic.to(device)
     actor_critic.eval()
     return actor_critic, algo_args
 
@@ -280,8 +386,11 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
             desired     = alpha_final * taga_action + (1.0 - alpha_final) * base_action_np
 
             if obs is not None and safety_ctrl is not None:
-                obs_tensor  = torch.FloatTensor(obs).unsqueeze(0).to(device)
-                best_action = safety_ctrl.get_safe_taga_action(obs_tensor, desired, device)
+                # obs is a numpy dict for neural policies; convert to tensored dict
+                obs_for_ctrl = (raw_obs_to_tensor(obs, env.observation_space.spaces, device)
+                                if isinstance(obs, dict) else
+                                torch.FloatTensor(obs).unsqueeze(0).to(device))
+                best_action = safety_ctrl.get_safe_taga_action(obs_for_ctrl, desired, device)
             else:
                 best_action = desired
 
@@ -322,6 +431,11 @@ def draw_state(ax, env, robot, config, step_num, reward, done, label):
     rc = plt.Circle((robot.px, robot.py), robot.radius,
                     facecolor='gold', edgecolor='black', linewidth=1.2, zorder=8)
     ax.add_patch(rc); drawn.append(rc)
+    sensor_range = getattr(config.robot, 'sensor_range', 5)
+    sr = plt.Circle((robot.px, robot.py), sensor_range,
+                    fill=False, edgecolor='steelblue', linestyle=':', linewidth=1.0,
+                    alpha=0.5, zorder=4)
+    ax.add_patch(sr); drawn.append(sr)
     spd = np.hypot(robot.vx, robot.vy)
     if spd > 0.05:
         theta = np.arctan2(robot.vy, robot.vx)
@@ -364,8 +478,8 @@ def draw_state(ax, env, robot, config, step_num, reward, done, label):
                 transform=ax.transAxes, fontsize=9, va='top',
                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
     drawn.append(t)
-    taga_flag = ' [+TAGA]' if '+taga' in label else ''
-    ax.set_title(f'Policy: {label.upper()}{taga_flag}', fontsize=12, fontweight='bold')
+    display_label = label.replace('+taga', ' + taga').upper()
+    ax.set_title(f'Policy: {display_label}', fontsize=12, fontweight='bold')
 
 def build_legend(ax, env):
     handles = [
@@ -373,6 +487,8 @@ def build_legend(ax, env):
         mlines.Line2D([], [], marker='*', color='red', linestyle='None',
                       markersize=12, label='Goal'),
         mpatches.Patch(facecolor='lightgray', edgecolor='black', label='Individual'),
+        mlines.Line2D([], [], color='steelblue', linestyle=':', linewidth=1.0,
+                      alpha=0.7, label=f'Obs range ({getattr(env.config.robot, "sensor_range", 5)} m)'),
     ]
     for g in env.grp:
         if g.members:
@@ -390,13 +506,33 @@ def compute_gcr(robot, env):
 
 # ── Hidden state helpers for neural policies ──────────────────────────────────
 def init_hidden(actor_critic, device):
-    base  = actor_critic.module.base
+    base     = actor_critic.base
     node_num = 1
     edge_num = base.human_num + 1
     return {
         'human_node_rnn':       torch.zeros(1, node_num, base.human_node_rnn_size, device=device),
         'human_human_edge_rnn': torch.zeros(1, edge_num, base.human_human_edge_rnn_size, device=device),
     }
+
+def raw_obs_to_tensor(obs, obs_space, device):
+    """Convert raw gym dict obs to float32 tensors matching VecEnv output.
+
+    VecEnv (DummyVecEnv + VecPyTorch) reshapes each obs to the declared
+    obs_space shape and stacks with batch dim=1.  We replicate that here so
+    reshapeT() inside the network sees the expected 4-D tensors.
+    """
+    out = {}
+    for key, val in obs.items():
+        if key == 'group_members':
+            out[key] = val
+        else:
+            expected = obs_space[key].shape          # e.g. (1, 7) for robot_node
+            arr = np.array(val).reshape(expected)
+            t = torch.from_numpy(arr)
+            if t.dtype == torch.float64:
+                t = t.float()
+            out[key] = t.unsqueeze(0).to(device)     # add batch dim → (1, *expected)
+    return out
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -425,20 +561,31 @@ for entry in ALL_ENTRIES:
             import importlib
             cfg_mod    = importlib.import_module(model_dir.replace('/', '.') + '.configs.config')
             run_config = cfg_mod.Config()
-            actor_critic, algo_args = load_neural_policy(model_dir, run_config, device)
+            actor_critic, algo_args = load_neural_policy(model_dir, policy_key, run_config, device)
         except Exception as e:
-            print(f"  SKIP — failed to load: {e}")
+            import traceback
+            print(f"  SKIP — failed to load: {type(e).__name__}: {e}")
+            traceback.print_exc()
             continue
+
+    use_gst = is_neural and getattr(algo_args, 'env_name', '') == 'CrowdSimPredRealGST-v0'
 
     for seed in SEEDS:
         # Fresh config and env per seed so RNG is identical across policies
         config = Config()
-        config.sim.predict_method = 'none'
-        config.env.use_wrapper    = False
-        config.group.types        = args.group_types.split(',')
-        config.robot.policy       = policy_key
-
-        env    = CrowdSimVarNum()
+        config.group.types  = args.group_types.split(',')
+        config.robot.policy = policy_key
+        if use_gst:
+            # config defaults: predict_method='inferred', use_wrapper=True — leave them
+            env = CrowdSimPredRealGST()
+        elif is_neural:
+            config.sim.predict_method = 'const_vel'
+            config.env.use_wrapper    = False
+            env = CrowdSimPred()
+        else:
+            config.sim.predict_method = 'none'
+            config.env.use_wrapper    = False
+            env = CrowdSimVarNum()
         env.configure(config)
         robot  = Robot(config, 'robot')
         env.set_robot(robot)
@@ -448,9 +595,11 @@ for entry in ALL_ENTRIES:
 
         # Policy
         if is_neural:
-            robot.policy      = actor_critic  # stored for reference; actions computed below
-            robot.kinematics  = config.action_space.kinematics
-            hidden            = None          # initialised after reset
+            # robot.policy must be a proper policy class with .name and .clip_action;
+            # the actor_critic (nn.Module) is used externally for inference only.
+            robot.policy     = policy_factory.get(policy_key)(config)
+            robot.kinematics = config.action_space.kinematics
+            hidden           = None          # initialised after reset
         else:
             pol               = load_classical_policy(policy_key, config)
             robot.policy      = pol
@@ -459,7 +608,16 @@ for entry in ALL_ENTRIES:
         # TAGA controller
         safety_ctrl = TAGASafetyController(config) if use_taga else None
 
+        # GSTPredictor: one per seed (fresh trajectory buffers)
+        gst = None
+        if use_gst:
+            gst = GSTPredictor(config, device)
+
         obs = env.reset()
+        if gst is not None:
+            gst.reset()
+            obs = gst.process(obs)
+
         print(f"  Seed {seed} | groups: {[(g.id, g.group_type) for g in env.grp if g.members]}")
 
         if is_neural:
@@ -488,11 +646,11 @@ for entry in ALL_ENTRIES:
         for step in range(1, args.max_steps + 1):
             # ── Compute base action ──────────────────────────────────────────
             if is_neural:
-                obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device)
-                masks       = torch.zeros(1, 1, device=device)
+                obs_t  = raw_obs_to_tensor(obs, env.observation_space.spaces, device)
+                masks  = torch.zeros(1, 1, device=device)
                 with torch.no_grad():
-                    _, action_tensor, _, hidden = actor_critic(
-                        obs_tensor, hidden, masks)
+                    _, action_tensor, _, hidden = actor_critic.act(
+                        obs_t, hidden, masks, deterministic=True)
                 base_action_np = action_tensor.squeeze().cpu().numpy()
             else:
                 state          = JointState(robot.get_full_state(),
@@ -505,12 +663,18 @@ for entry in ALL_ENTRIES:
                 obs_for_taga = obs if is_neural else None
                 final_action = apply_taga(obs_for_taga, base_action_np,
                                           robot, env, safety_ctrl, config, device)
+                # CrowdSimPred.step expects numpy for neural policies (clip_action converts to ActionXY)
+                if is_neural:
+                    final_action = np.array([final_action.vx, final_action.vy])
             else:
                 from crowd_sim.envs.utils.action import ActionXY
-                final_action = ActionXY(*base_action_np)
+                if is_neural:
+                    final_action = base_action_np      # numpy → clip_action in step() converts
+                else:
+                    final_action = ActionXY(*base_action_np)
 
             ob, reward, done, info = env.step(final_action)
-            obs = ob
+            obs = gst.process(ob) if gst is not None else ob
 
             total_reward += reward
             n_steps      += 1

@@ -40,7 +40,10 @@ def main():
 		os.makedirs(save_config_dir)
 	shutil.copy('crowd_nav/configs/config.py', save_config_dir)
 	shutil.copy('crowd_nav/configs/__init__.py', save_config_dir)
-	# shutil.copy('arguments.py', algo_args.output_dir)
+	shutil.copy('arguments.py', algo_args.output_dir)
+	# save the actual env_name used so record_comparison.py can detect it at eval time
+	with open(os.path.join(algo_args.output_dir, 'env_name.txt'), 'w') as _f:
+		_f.write(algo_args.env_name)
 
 
 	env_config = config = Config()
