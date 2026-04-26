@@ -316,16 +316,22 @@ TAGA_STATS = {
     'activated':      0,   # TAGA produced a tangent action
     'damped_safety':  0,   # binary safety check rejected TAGA → fell back to base
     'paused':         0,   # robot stood still (inside a moving group hull)
+    'cone_paused':    0,   # individual blocked escape cone → paused instead of colliding
+    'pause_overflow': 0,   # consecutive-pause budget exhausted → forced commit
 }
+# Persistent state across calls within an episode (consecutive-pause budget).
+_TAGA_STATE = {'consecutive_pauses': 0}
 def _taga_stats_reset():
     for k in TAGA_STATS: TAGA_STATS[k] = 0
+    _TAGA_STATE['consecutive_pauses'] = 0
 def _taga_stats_print(seed, label):
     s = TAGA_STATS
     if s['total_steps'] == 0: return
     print(f"    [TAGA {label} seed={seed}] steps={s['total_steps']} "
           f"skipped_intent={s['skipped_intent']} goal_pri={s['goal_priority']} "
           f"no_blockers={s['no_blockers']} activated={s['activated']} "
-          f"damped={s['damped_safety']} paused={s['paused']}")
+          f"damped={s['damped_safety']} paused={s['paused']} "
+          f"cone_paused={s['cone_paused']} pause_ovf={s['pause_overflow']}")
 
 def _sigmoid_alpha(d_group, d_switch, band):
     """Sigmoid blend: 1 when close, 0 when far. Smooth S-curve, no step jump."""
@@ -371,6 +377,7 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
     radii     = env.group_radii    or []
 
     if not centroids:
+        _TAGA_STATE['consecutive_pauses'] = 0
         return ActionXY(*base_action_np)
 
     rx, ry = robot.px, robot.py
@@ -382,12 +389,20 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
     # stationary formation would just cause a timeout; ORCA needs to extract.
     hulls = getattr(env, 'group_hulls', None) or {}
     robot_pos = np.array([rx, ry])
+    max_pause_budget = getattr(taga_cfg, 'max_consecutive_pause', 3)
     for gid, hull in hulls.items():
         group = env.grp[gid] if gid < len(env.grp) else None
         if group and group.group_type in ('dynamic_lf', 'dynamic_free'):
             if hull.contains(robot_pos):
-                TAGA_STATS['paused'] += 1
-                return ActionXY(0.0, 0.0)
+                if _TAGA_STATE['consecutive_pauses'] < max_pause_budget:
+                    _TAGA_STATE['consecutive_pauses'] += 1
+                    TAGA_STATS['paused'] += 1
+                    return ActionXY(0.0, 0.0)
+                # Budget exhausted: bail out via base action so the robot makes
+                # *some* progress instead of freezing inside a moving hull.
+                TAGA_STATS['pause_overflow'] += 1
+                _TAGA_STATE['consecutive_pauses'] = 0
+                return ActionXY(*base_action_np)
 
     gx, gy = robot.gx, robot.gy
     d_robot_goal = math.hypot(gx - rx, gy - ry)
@@ -408,6 +423,11 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
     if not goal_priority_fire:
         # P3 (Idea 4): Intent-based activation — check if base action would enter any hull
         # If base policy is already arcing around groups, skip TAGA entirely.
+        # Future-hull check: for moving groups, predict hull position at
+        # t=intent_lookahead (translate by V_group * t_intent). Equivalently,
+        # translate the robot's future position by -V_group * t_intent and test
+        # against the CURRENT hull. Avoids false positives where the hull has
+        # moved out of the robot's path by the time the robot arrives.
         intent_enabled = getattr(taga_cfg, 'intent_based', False)
         if intent_enabled:
             t_intent = taga_cfg.intent_lookahead
@@ -416,21 +436,33 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
             hulls = getattr(env, 'group_hulls', None) or {}
             base_enters_group = False
             for gid, hull in hulls.items():
-                if hull.contains(base_future):
+                grp = env.grp[gid] if gid < len(env.grp) else None
+                v_off = np.array([0.0, 0.0])
+                if grp and grp.group_type in ('dynamic_lf', 'dynamic_free'):
+                    if grp.group_type == 'dynamic_lf' and grp.leader is not None:
+                        v_off = np.array([grp.leader.vx, grp.leader.vy]) * t_intent
+                    elif grp.members:
+                        v_off = np.array([
+                            float(np.mean([m.vx for m in grp.members])),
+                            float(np.mean([m.vy for m in grp.members])),
+                        ]) * t_intent
+                check_pos = base_future - v_off
+                if hull.contains(check_pos):
                     base_enters_group = True
                     break
                 # Also check margin: approaching hull boundary counts
                 if hasattr(hull, 'distance_to_boundary'):
-                    if hull.distance_to_boundary(base_future) < taga_cfg.intent_margin:
+                    if hull.distance_to_boundary(check_pos) < taga_cfg.intent_margin:
                         base_enters_group = True
                         break
             if not base_enters_group:
                 TAGA_STATS['skipped_intent'] += 1
+                _TAGA_STATE['consecutive_pauses'] = 0
                 return ActionXY(*base_action_np)
 
         # P2: collect ALL blocking groups
         blocking = []
-        for centroid, radius in zip(centroids, radii):
+        for gid, (centroid, radius) in enumerate(zip(centroids, radii)):
             cx, cy = (centroid[0], centroid[1]) if hasattr(centroid, '__len__') else centroid
             d_centroid      = math.hypot(cx - rx, cy - ry)
             d_centroid_goal = math.hypot(cx - gx, cy - gy)
@@ -454,18 +486,53 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
             norm_dxy = math.hypot(dx, dy) + 1e-9
             cw_tang  = np.array([ dy, -dx]) / norm_dxy
             ccw_tang = np.array([-dy,  dx]) / norm_dxy
+            tangent  = cw_tang  # default; overwritten by selection logic below
 
-            # P1: cost-aware side selection
-            if getattr(taga_cfg, 'cost_aware_side', False):
-                cw_cost  = (taga_cfg.w_goal * (1 - np.dot(cw_tang,  goal_dir)) / 2
-                            + taga_cfg.w_obstacle * _obstacle_cost_np(cw_tang,  rx, ry, env, (cx, cy), taga_cfg))
-                ccw_cost = (taga_cfg.w_goal * (1 - np.dot(ccw_tang, goal_dir)) / 2
-                            + taga_cfg.w_obstacle * _obstacle_cost_np(ccw_tang, rx, ry, env, (cx, cy), taga_cfg))
-                tangent = cw_tang if cw_cost <= ccw_cost else ccw_tang
-            else:
-                cw_angle  = np.arccos(np.clip(np.dot(cw_tang,  goal_dir), -1, 1))
-                ccw_angle = np.arccos(np.clip(np.dot(ccw_tang, goal_dir), -1, 1))
-                tangent   = cw_tang if cw_angle < ccw_angle else ccw_tang
+            # Tangent side selection:
+            # Dynamic groups (dynamic_lf / dynamic_free): pick whichever CW/CCW
+            # tangent best aligns with -V_group so the robot moves opposite to the
+            # group's travel direction. This maximises separation velocity and avoids
+            # the robot drifting into the moving hull's future positions.
+            # Static groups or nearly-stationary dynamic groups: fall back to the
+            # existing cost-aware / smaller-angle rule.
+            group = env.grp[gid] if gid < len(env.grp) else None
+            used_anti_vel = False
+            if getattr(taga_cfg, 'anti_vel_dynamic', True) and group is not None:
+                if group.group_type in ('dynamic_lf', 'dynamic_free'):
+                    if group.group_type == 'dynamic_lf' and group.leader is not None:
+                        vgx, vgy = group.leader.vx, group.leader.vy
+                    else:
+                        vgx = float(np.mean([m.vx for m in group.members])) if group.members else 0.0
+                        vgy = float(np.mean([m.vy for m in group.members])) if group.members else 0.0
+                    v_speed = math.hypot(vgx, vgy)
+                    if v_speed > getattr(taga_cfg, 'anti_vel_min_speed', 0.1):
+                        v_unit = np.array([vgx, vgy]) / v_speed
+                        # Anti-velocity is only safe when the group is NOT walking
+                        # alongside the robot toward the goal. If V_group is aligned
+                        # with goal_dir, going opposite means going BACKWARD —
+                        # better to defer to cost-aware logic and overtake instead.
+                        max_with_goal = getattr(taga_cfg, 'anti_vel_max_with_goal', 0.5)
+                        if float(np.dot(v_unit, goal_dir)) < max_with_goal:
+                            anti_vel = -v_unit
+                            w_a = getattr(taga_cfg, 'anti_vel_w_anti', 0.3)
+                            w_g = getattr(taga_cfg, 'anti_vel_w_goal', 0.7)
+                            cw_score  = w_a * np.dot(cw_tang,  anti_vel) + w_g * np.dot(cw_tang,  goal_dir)
+                            ccw_score = w_a * np.dot(ccw_tang, anti_vel) + w_g * np.dot(ccw_tang, goal_dir)
+                            tangent = cw_tang if cw_score >= ccw_score else ccw_tang
+                            used_anti_vel = True
+
+            if not used_anti_vel:
+                # P1: cost-aware side selection
+                if getattr(taga_cfg, 'cost_aware_side', False):
+                    cw_cost  = (taga_cfg.w_goal * (1 - np.dot(cw_tang,  goal_dir)) / 2
+                                + taga_cfg.w_obstacle * _obstacle_cost_np(cw_tang,  rx, ry, env, (cx, cy), taga_cfg))
+                    ccw_cost = (taga_cfg.w_goal * (1 - np.dot(ccw_tang, goal_dir)) / 2
+                                + taga_cfg.w_obstacle * _obstacle_cost_np(ccw_tang, rx, ry, env, (cx, cy), taga_cfg))
+                    tangent = cw_tang if cw_cost <= ccw_cost else ccw_tang
+                else:
+                    cw_angle  = np.arccos(np.clip(np.dot(cw_tang,  goal_dir), -1, 1))
+                    ccw_angle = np.arccos(np.clip(np.dot(ccw_tang, goal_dir), -1, 1))
+                    tangent   = cw_tang if cw_angle < ccw_angle else ccw_tang
 
             blocking.append((alpha, tangent, d_centroid))
 
@@ -490,6 +557,59 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
                 alpha_final, tangent_final, _ = blocking[0]
 
             taga_action = tangent_final * v_pref
+
+            # Escape-cone scan with TTC gating: pause only if an individual is on
+            # an actual collision course (not just standing in the cone). Walking
+            # past us in the same direction shouldn't trigger a pause. Also
+            # honour the consecutive-pause budget — never freeze indefinitely.
+            if getattr(taga_cfg, 'anti_vel_dynamic', True):
+                cone_half = math.radians(getattr(taga_cfg, 'anti_vel_cone_angle', 45.0))
+                pause_r   = getattr(taga_cfg, 'anti_vel_pause_radius', 1.2)
+                cos_cone  = math.cos(cone_half)
+                use_ttc   = getattr(taga_cfg, 'cone_ttc_check', True)
+                t_horizon = getattr(taga_cfg, 'cone_ttc_horizon', 0.7)
+                ttc_r     = getattr(taga_cfg, 'cone_ttc_radius', 0.55)
+                r_vel     = taga_action  # robot's intended velocity if we commit
+
+                blocker_found = False
+                for human in env.humans:
+                    if getattr(human, 'group_id', None) is not None:
+                        continue
+                    hdx, hdy = human.px - rx, human.py - ry
+                    hd = math.hypot(hdx, hdy)
+                    if hd < 1e-3 or hd > pause_r:
+                        continue
+                    if np.dot(np.array([hdx, hdy]) / hd, tangent_final) <= cos_cone:
+                        continue
+                    if not use_ttc:
+                        blocker_found = True
+                        break
+                    # TTC check: closest-approach distance over the horizon.
+                    rel_p = np.array([hdx, hdy])
+                    rel_v = np.array([human.vx - r_vel[0], human.vy - r_vel[1]])
+                    rv2   = float(np.dot(rel_v, rel_v))
+                    if rv2 < 1e-6:
+                        # Both essentially stationary — fall back to distance check.
+                        if hd < ttc_r:
+                            blocker_found = True
+                            break
+                        continue
+                    ttc = -float(np.dot(rel_p, rel_v)) / rv2
+                    if ttc <= 0 or ttc > t_horizon:
+                        continue  # not approaching, or too far in the future
+                    closest = rel_p + ttc * rel_v
+                    if float(np.linalg.norm(closest)) < ttc_r:
+                        blocker_found = True
+                        break
+
+                if blocker_found:
+                    if _TAGA_STATE['consecutive_pauses'] < getattr(taga_cfg, 'max_consecutive_pause', 3):
+                        _TAGA_STATE['consecutive_pauses'] += 1
+                        TAGA_STATS['cone_paused'] += 1
+                        return ActionXY(0.0, 0.0)
+                    # Budget exhausted: commit anyway. Base ORCA / individual
+                    # avoidance below should still react in the same step.
+                    TAGA_STATS['pause_overflow'] += 1
 
             # Compute the candidate TAGA-blended action at the sigmoid-determined alpha
             desired = alpha_final * taga_action + (1.0 - alpha_final) * base_action_np
@@ -517,8 +637,13 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
                         grp = env.grp[gid] if gid < len(env.grp) else None
                         if grp and grp.group_type in ('dynamic_lf', 'dynamic_free'):
                             if hull.contains(base_future):
-                                TAGA_STATS['paused'] += 1
-                                return ActionXY(0.0, 0.0)
+                                if _TAGA_STATE['consecutive_pauses'] < max_pause_budget:
+                                    _TAGA_STATE['consecutive_pauses'] += 1
+                                    TAGA_STATS['paused'] += 1
+                                    return ActionXY(0.0, 0.0)
+                                TAGA_STATS['pause_overflow'] += 1
+                                break
+                    _TAGA_STATE['consecutive_pauses'] = 0
                     return ActionXY(*base_action_np)
 
             TAGA_STATS['activated'] += 1
@@ -532,6 +657,7 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
             else:
                 best_action = desired
 
+    _TAGA_STATE['consecutive_pauses'] = 0
     return ActionXY(*best_action) if not isinstance(best_action, type(ActionXY(0, 0))) else best_action
 
 # ── Render helpers ────────────────────────────────────────────────────────────

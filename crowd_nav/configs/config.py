@@ -181,6 +181,30 @@ class Config(object):
     # P3: Debug logging — prints per-episode TAGA activity summary
     taga.debug_log           = True
 
+    # Anti-velocity tangent for dynamic groups (new):
+    # For dynamic_lf / dynamic_free groups, pick the CW/CCW tangent that best
+    # combines (a) alignment with -V_group (escape opposite to group travel) and
+    # (b) alignment with goal_dir (still progress toward the goal). Goal-blended
+    # so we don't backpedal when a group walks toward the same goal.
+    # Then scan a cone in that direction: if any individual is on a collision
+    # course (TTC-based, not just in-cone), stand still instead of colliding.
+    # Bounded pause budget prevents the robot from freezing forever.
+    taga.anti_vel_dynamic     = False  # OFF: regressed ORCA; cost-aware tangent works better
+    taga.anti_vel_min_speed   = 0.1    # m/s: min group speed to apply anti-vel rule
+    # If V_group · goal_dir > this threshold, the group is walking with us toward
+    # the goal — anti-velocity would point backward, so fall back to cost-aware.
+    taga.anti_vel_max_with_goal = 0.5
+    taga.anti_vel_w_anti      = 0.3    # weight on -V_group alignment in tangent score
+    taga.anti_vel_w_goal      = 0.7    # weight on goal_dir alignment in tangent score
+    taga.anti_vel_cone_angle  = 45.0   # degrees: half-angle of escape-path cone scan
+    taga.anti_vel_pause_radius = 1.2   # m: gate distance for cone scan
+    # TTC-aware cone-pause: pause only when individual is on a collision course.
+    taga.cone_ttc_check       = True   # use TTC instead of just-in-cone presence
+    taga.cone_ttc_horizon     = 0.7    # s: lookahead horizon for closest-approach
+    taga.cone_ttc_radius      = 0.55   # m: collision-course distance threshold
+    # Bounded pause budget — robot never pauses more than N consecutive steps.
+    taga.max_consecutive_pause = 3
+
     # config for simulation
     sim = BaseConfig()
     sim.circle_radius = 6 * np.sqrt(2)
