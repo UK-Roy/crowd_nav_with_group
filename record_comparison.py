@@ -37,6 +37,16 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+
+# Force deterministic CUDA ops so GPU and CPU produce identical results for the same seed.
+# cudnn.benchmark=False disables kernel autotuning; deterministic=True forces reproducible kernels.
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark     = False
+# Use deterministic algorithms where available (torch >= 1.8)
+try:
+    torch.use_deterministic_algorithms(True, warn_only=True)
+except AttributeError:
+    pass
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -75,7 +85,7 @@ POLICY_REGISTRY = [
     dict(label='social_force',   policy_key='social_force',            model_dir=None,
          with_taga=True),
     dict(label='srnn',           policy_key='srnn',
-         model_dir='trained_models/srnn',                              with_taga=True),
+         model_dir='trained_models/srnn_no_groups',                    with_taga=True),
     dict(label='intention_rl',   policy_key='selfAttn_merge_srnn',
          model_dir='trained_models/GST_predictor_rand',                with_taga=True),
     dict(label='gram',           policy_key='selfAttn_merge_srnn_grpAttn',
@@ -228,13 +238,20 @@ def load_neural_policy(model_dir, policy_key, config, device):
     load_path = ckpts[-1]
     print(f"    Loading checkpoint: {os.path.basename(load_path)}")
 
-    # Build a fresh config for the throwaway env (neural policies need CrowdSimPred)
+    # Build a fresh config for the throwaway env — must match the env used at training time
+    # so that observation_space.spaces has the correct spatial_edges size.
+    # SRNN: CrowdSimVarNum (spatial_edges size 2, no predictions)
+    # GARN / intention_rl: CrowdSimPred (spatial_edges size 12, with 5-step predictions)
     tmp_cfg = Config()
-    tmp_cfg.robot.policy        = policy_key
-    tmp_cfg.sim.predict_method  = 'const_vel'
-    tmp_cfg.env.use_wrapper     = False
+    tmp_cfg.robot.policy       = policy_key
+    tmp_cfg.env.use_wrapper    = False
 
-    tmp_env = CrowdSimPred()
+    if getattr(algo_args, 'env_name', '') == 'CrowdSimVarNum-v0':
+        tmp_cfg.sim.predict_method = 'none'
+        tmp_env = CrowdSimVarNum()
+    else:
+        tmp_cfg.sim.predict_method = 'const_vel'
+        tmp_env = CrowdSimPred()
     tmp_env.configure(tmp_cfg)
     tmp_robot = Robot(tmp_cfg, 'robot')
     tmp_env.set_robot(tmp_robot)
@@ -262,6 +279,54 @@ def load_classical_policy(policy_key, config):
     return p
 
 # ── TAGA helpers ─────────────────────────────────────────────────────────────
+def _taga_worse_than_base(taga_action, base_action, rx, ry, env, horizons, r_safe):
+    """Binary safety check: does the TAGA-blended action put the robot CLOSER to
+    any individual (non-group) human than the base action would, AND below the
+    safety radius?  If so, TAGA is making things worse → reject and fall back to base.
+
+    Rationale: linear extrapolation over-predicts collisions for ORCA humans (who
+    actually react to the robot).  So we don't ask "is TAGA safe in absolute terms?"
+    — instead we ask "is TAGA *worse than base* for individuals?"  If base would
+    pass an individual at 0.6m and TAGA would pass it at 0.3m, that's TAGA making
+    things worse.  Use base.  If TAGA passes the same individual at 0.7m (further
+    than base) — keep TAGA, it's not interfering.
+    """
+    for t_h in horizons:
+        ftx = rx + taga_action[0] * t_h
+        fty = ry + taga_action[1] * t_h
+        fbx = rx + base_action[0] * t_h
+        fby = ry + base_action[1] * t_h
+        for h in env.humans:
+            if getattr(h, 'group_id', None) is not None:
+                continue
+            fhx = h.px + h.vx * t_h
+            fhy = h.py + h.vy * t_h
+            d_taga = math.hypot(ftx - fhx, fty - fhy)
+            d_base = math.hypot(fbx - fhx, fby - fhy)
+            if d_taga < r_safe and d_taga < d_base:
+                return True
+    return False
+
+# Per-episode counters for debug logging (reset in main loop at each seed)
+TAGA_STATS = {
+    'total_steps':    0,   # total TAGA calls
+    'skipped_intent': 0,   # Idea 4: base action was safe → TAGA skipped
+    'goal_priority':  0,   # goal priority override
+    'no_blockers':    0,   # no groups in goal direction
+    'activated':      0,   # TAGA produced a tangent action
+    'damped_safety':  0,   # binary safety check rejected TAGA → fell back to base
+    'paused':         0,   # robot stood still (inside a moving group hull)
+}
+def _taga_stats_reset():
+    for k in TAGA_STATS: TAGA_STATS[k] = 0
+def _taga_stats_print(seed, label):
+    s = TAGA_STATS
+    if s['total_steps'] == 0: return
+    print(f"    [TAGA {label} seed={seed}] steps={s['total_steps']} "
+          f"skipped_intent={s['skipped_intent']} goal_pri={s['goal_priority']} "
+          f"no_blockers={s['no_blockers']} activated={s['activated']} "
+          f"damped={s['damped_safety']} paused={s['paused']}")
+
 def _sigmoid_alpha(d_group, d_switch, band):
     """Sigmoid blend: 1 when close, 0 when far. Smooth S-curve, no step jump."""
     return 1.0 / (1.0 + math.exp((d_group - d_switch) / max(band / 3.0, 1e-6)))
@@ -300,6 +365,7 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
 
     taga_cfg = config.taga
     v_pref   = robot.v_pref
+    TAGA_STATS['total_steps'] += 1
 
     centroids = env.group_centroids or []
     radii     = env.group_radii    or []
@@ -308,6 +374,21 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
         return ActionXY(*base_action_np)
 
     rx, ry = robot.px, robot.py
+
+    # Pause-and-wait: if the robot is currently inside a moving group's hull,
+    # stand still and let them walk past. Trying to tangent around a hull that
+    # keeps moving toward the robot just leaves the robot stuck at the boundary
+    # (high GCR, longer paths). Excluded for static_f groups — pausing inside a
+    # stationary formation would just cause a timeout; ORCA needs to extract.
+    hulls = getattr(env, 'group_hulls', None) or {}
+    robot_pos = np.array([rx, ry])
+    for gid, hull in hulls.items():
+        group = env.grp[gid] if gid < len(env.grp) else None
+        if group and group.group_type in ('dynamic_lf', 'dynamic_free'):
+            if hull.contains(robot_pos):
+                TAGA_STATS['paused'] += 1
+                return ActionXY(0.0, 0.0)
+
     gx, gy = robot.gx, robot.gy
     d_robot_goal = math.hypot(gx - rx, gy - ry)
     goal_dir = np.array([gx - rx, gy - ry])
@@ -322,7 +403,31 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
     )
 
     best_action = base_action_np.copy()
+    if goal_priority_fire:
+        TAGA_STATS['goal_priority'] += 1
     if not goal_priority_fire:
+        # P3 (Idea 4): Intent-based activation — check if base action would enter any hull
+        # If base policy is already arcing around groups, skip TAGA entirely.
+        intent_enabled = getattr(taga_cfg, 'intent_based', False)
+        if intent_enabled:
+            t_intent = taga_cfg.intent_lookahead
+            base_future = np.array([rx + base_action_np[0] * t_intent,
+                                    ry + base_action_np[1] * t_intent])
+            hulls = getattr(env, 'group_hulls', None) or {}
+            base_enters_group = False
+            for gid, hull in hulls.items():
+                if hull.contains(base_future):
+                    base_enters_group = True
+                    break
+                # Also check margin: approaching hull boundary counts
+                if hasattr(hull, 'distance_to_boundary'):
+                    if hull.distance_to_boundary(base_future) < taga_cfg.intent_margin:
+                        base_enters_group = True
+                        break
+            if not base_enters_group:
+                TAGA_STATS['skipped_intent'] += 1
+                return ActionXY(*base_action_np)
+
         # P2: collect ALL blocking groups
         blocking = []
         for centroid, radius in zip(centroids, radii):
@@ -364,6 +469,8 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
 
             blocking.append((alpha, tangent, d_centroid))
 
+        if not blocking:
+            TAGA_STATS['no_blockers'] += 1
         if blocking:
             if getattr(taga_cfg, 'multi_group', False):
                 # P2: weighted-average tangent, k-nearest groups
@@ -383,7 +490,38 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
                 alpha_final, tangent_final, _ = blocking[0]
 
             taga_action = tangent_final * v_pref
-            desired     = alpha_final * taga_action + (1.0 - alpha_final) * base_action_np
+
+            # Compute the candidate TAGA-blended action at the sigmoid-determined alpha
+            desired = alpha_final * taga_action + (1.0 - alpha_final) * base_action_np
+
+            # Binary safety check: commit fully to TAGA, or fall back fully to base.
+            # No alpha-blending middle ground — that would create a path neither
+            # policy would take, which is exactly what makes things worse for individuals.
+            # Rule: if TAGA brings the robot closer to ANY individual human than base
+            # would (and below safety_radius), reject TAGA — keep what base was doing.
+            if getattr(taga_cfg, 'safety_filter', False):
+                r_safe   = taga_cfg.safety_radius
+                horizons = getattr(taga_cfg, 'safety_horizons', [0.3, 0.7, 1.0, 1.5, 2.0])
+                if _taga_worse_than_base(desired, base_action_np, rx, ry, env,
+                                         horizons, r_safe):
+                    TAGA_STATS['damped_safety'] += 1
+                    # Proactive pause: TAGA is unsafe for individuals AND the base
+                    # action would enter a moving hull → both options are bad (dense
+                    # scene with groups + individuals). Stand still — the group will
+                    # walk past and the scene opens up. This prevents hull entry
+                    # before it happens, keeping GCR from incrementing.
+                    t_look = taga_cfg.intent_lookahead
+                    base_future = np.array([rx + base_action_np[0] * t_look,
+                                            ry + base_action_np[1] * t_look])
+                    for gid, hull in hulls.items():
+                        grp = env.grp[gid] if gid < len(env.grp) else None
+                        if grp and grp.group_type in ('dynamic_lf', 'dynamic_free'):
+                            if hull.contains(base_future):
+                                TAGA_STATS['paused'] += 1
+                                return ActionXY(0.0, 0.0)
+                    return ActionXY(*base_action_np)
+
+            TAGA_STATS['activated'] += 1
 
             if obs is not None and safety_ctrl is not None:
                 # obs is a numpy dict for neural policies; convert to tensored dict
@@ -525,11 +663,13 @@ def raw_obs_to_tensor(obs, obs_space, device):
     for key, val in obs.items():
         if key == 'group_members':
             out[key] = val
+        elif key not in obs_space:
+            continue                                  # skip keys not declared in obs_space
         else:
             expected = obs_space[key].shape          # e.g. (1, 7) for robot_node
             arr = np.array(val).reshape(expected)
             t = torch.from_numpy(arr)
-            if t.dtype == torch.float64:
+            if t.dtype != torch.float32:
                 t = t.float()
             out[key] = t.unsqueeze(0).to(device)     # add batch dim → (1, *expected)
     return out
@@ -571,6 +711,15 @@ for entry in ALL_ENTRIES:
     use_gst = is_neural and getattr(algo_args, 'env_name', '') == 'CrowdSimPredRealGST-v0'
 
     for seed in SEEDS:
+        # Deterministic RNG: seed numpy, python-random, and torch identically per seed
+        # so ORCA's internal RNG and neural policies produce the same outputs every run.
+        import random as _pyrandom
+        np.random.seed(seed)
+        _pyrandom.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
         # Fresh config and env per seed so RNG is identical across policies
         config = Config()
         config.group.types  = args.group_types.split(',')
@@ -578,6 +727,10 @@ for entry in ALL_ENTRIES:
         if use_gst:
             # config defaults: predict_method='inferred', use_wrapper=True — leave them
             env = CrowdSimPredRealGST()
+        elif is_neural and getattr(algo_args, 'env_name', '') == 'CrowdSimVarNum-v0':
+            config.sim.predict_method = 'none'
+            config.env.use_wrapper    = False
+            env = CrowdSimVarNum()
         elif is_neural:
             config.sim.predict_method = 'const_vel'
             config.env.use_wrapper    = False
@@ -619,6 +772,7 @@ for entry in ALL_ENTRIES:
             obs = gst.process(obs)
 
         print(f"  Seed {seed} | groups: {[(g.id, g.group_type) for g in env.grp if g.members]}")
+        _taga_stats_reset()
 
         if is_neural:
             hidden = init_hidden(actor_critic, device)
@@ -665,7 +819,9 @@ for entry in ALL_ENTRIES:
                                           robot, env, safety_ctrl, config, device)
                 # CrowdSimPred.step expects numpy for neural policies (clip_action converts to ActionXY)
                 if is_neural:
-                    final_action = np.array([final_action.vx, final_action.vy])
+                    vx = final_action.vx.cpu().item() if torch.is_tensor(final_action.vx) else final_action.vx
+                    vy = final_action.vy.cpu().item() if torch.is_tensor(final_action.vy) else final_action.vy
+                    final_action = np.array([vx, vy])
             else:
                 from crowd_sim.envs.utils.action import ActionXY
                 if is_neural:
@@ -702,6 +858,8 @@ for entry in ALL_ENTRIES:
         all_metrics.append(result)
         print(f"    → success={success}  collisions={collisions}  "
               f"steps={n_steps}  GCR={gcr:.3f}  reward={total_reward:.2f}")
+        if use_taga and getattr(config.taga, 'debug_log', False):
+            _taga_stats_print(seed, label)
 
         if not args.no_video:
             writer_ctx.__exit__(None, None, None)

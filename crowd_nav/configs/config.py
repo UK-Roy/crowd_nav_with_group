@@ -15,7 +15,7 @@ class Config(object):
 
     # general configs for OpenAI gym env
     env = BaseConfig()
-    env.time_limit = 50
+    env.time_limit = 56.25   # 56.25 / 0.25 = 225 steps
     env.time_step = 0.25
     env.val_size = 100
     env.test_size = 100
@@ -113,11 +113,11 @@ class Config(object):
     # Set False to recover original hard-threshold behaviour
     taga.smooth_switching = True
     # half-width of the blending band around the activation threshold (m)
-    taga.switch_band = 0.25
+    taga.switch_band = 0.5
     # extra margin added to group radius to trigger TAGA (m) — center of the band
-    taga.safe_margin = 0.25
+    taga.safe_margin = 0.6
     # robot ignores group avoidance within this distance to its goal (m)
-    taga.goal_threshold = 3.0
+    taga.goal_threshold = 2.5
 
     # Safety controller zones — expressed as multiples of (robot_radius + human_radius)
     # so they scale automatically with agent sizes.
@@ -144,15 +144,42 @@ class Config(object):
 
     # cost-aware tangent side selection (P1)
     taga.cost_aware_side = True       # False = legacy smaller-angle rule
-    taga.look_ahead = 3.0             # metres ahead to scan for obstacles
-    taga.cone_half_angle = 45.0       # degrees: cone half-angle for obstacle scan
-    taga.w_goal = 0.6                 # weight for goal-alignment cost
-    taga.w_obstacle = 0.4             # weight for obstacle-density cost
+    taga.look_ahead = 5.0             # metres ahead to scan for obstacles
+    taga.cone_half_angle = 60.0       # degrees: cone half-angle for obstacle scan
+    taga.w_goal = 0.4                 # weight for goal-alignment cost
+    taga.w_obstacle = 0.6             # weight for obstacle-density cost
     # multi-group aggregation (P2)
     # True  = weighted-average tangent across ALL blocking groups
     # False = legacy first-match-wins (break after first triggering group)
-    taga.multi_group = True
+    taga.multi_group = False
     taga.max_groups  = 3              # max blocking groups to consider per step
+
+    # Intent gate ON: TAGA only fires when the base policy's action would enter a
+    # group hull. This is the "base fails due to groups" case your design targets.
+    # Keeps the base-success guarantee — TAGA can only help, not hurt.
+    # GCR reduction via soft proximity activation is a separate feature (TODO).
+    taga.intent_based        = True
+    taga.intent_lookahead    = 0.7
+    taga.intent_margin       = 0.0
+
+    # P3: Safety filter — validate the TAGA-blended action against individual humans.
+    # If a collision is predicted, damp TAGA's influence (alpha) toward the base policy.
+    taga.safety_filter       = True
+    taga.safety_lookahead    = 1.0   # (legacy) single-horizon lookahead — kept for compat
+    taga.safety_radius       = 0.55  # metres: collision threshold (r_robot + r_human + buffer)
+    taga.safety_damping      = 0.0   # (legacy) multiply alpha when collision predicted
+
+    # P3 Option A: multi-horizon safety filter — checks collision at each time below
+    # Captures both fast (short horizon) and slow (long horizon) approaching humans.
+    taga.safety_horizons     = [0.3, 0.7, 1.0, 1.5, 2.0]
+
+    # P3 Option B: iterative alpha search — tries these alpha values in order (high→low),
+    # picks the highest one that doesn't collide. Preserves TAGA benefit when possible,
+    # falls back to 0.0 (pure base policy) only when all higher alphas fail.
+    taga.safety_alphas       = [1.0, 0.7, 0.4, 0.2, 0.0]
+
+    # P3: Debug logging — prints per-episode TAGA activity summary
+    taga.debug_log           = True
 
     # config for simulation
     sim = BaseConfig()

@@ -1052,7 +1052,15 @@ class CrowdSim(gym.Env):
         if self.end_goal_changing:
             for human in self.humans:
                 if not human.isObstacle and human.v_pref != 0 and norm((human.gx - human.px, human.gy - human.py)) < human.radius:
-                    self.update_human_goal(human)
+                    # Group members freeze in place instead of getting a new goal
+                    if getattr(human, 'group_id', None) is not None:
+                        human.gx = human.px
+                        human.gy = human.py
+                        human.vx = 0.0
+                        human.vy = 0.0
+                        human.v_pref = 0.0
+                    else:
+                        self.update_human_goal(human)
 
         return ob, reward, done, info
 

@@ -809,7 +809,14 @@ class CrowdSimVarNum(CrowdSim):
         if self.end_goal_changing:
             for i, human in enumerate(self.humans):
                 if norm((human.gx - human.px, human.gy - human.py)) < human.radius:
-                    if self.robot.kinematics == 'holonomic':
+                    # Group members freeze in place instead of teleporting/getting new goal
+                    if getattr(human, 'group_id', None) is not None:
+                        human.gx = human.px
+                        human.gy = human.py
+                        human.vx = 0.0
+                        human.vy = 0.0
+                        human.v_pref = 0.0
+                    elif self.robot.kinematics == 'holonomic':
                         self.humans[i] = self.generate_circle_crossing_human(self.initialize_human(i))
                     else:
                         self.update_human_goal(human)
