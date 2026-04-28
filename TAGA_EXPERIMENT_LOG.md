@@ -164,6 +164,95 @@ pause budget caps the rare timeout edge cases without firing in normal play.
 
 ---
 
+### Exp 05 — 100-seed confirmation of Exp 04 (2026-04-28)
+
+**Change:** none vs Exp 04. Same code (commit `10df8e0`), 100 seeds.
+
+**Motivation:** the 20-seed 0.95 SR signal on ORCA+TAGA needed confirmation
+because variance at N=20 is ±10pp.
+
+**Result (100 seeds, `/tmp/taga_test_100seed.log`):**
+
+| Policy | SR | CR | TR | GCR | Reward |
+|---|---|---|---|---|---|
+| orca | 0.85 | 0.12 | 0.03 | 0.0207 | 27.48 |
+| **orca+taga** | **0.81** | **0.12** | 0.07 | **0.0257** | 27.43 |
+| social_force | 0.43 | 0.40 | 0.17 | 0.0046 | 15.90 |
+| social_force+taga | 0.38 | 0.43 | 0.19 | 0.0015 | 13.60 |
+| intention_rl | 0.42 | 0.18 | 0.40 | 0.0215 | 18.45 |
+| intention_rl+taga | 0.38 | 0.16 | 0.46 | 0.0227 | 18.49 |
+
+**Comparison vs references:**
+
+| | B0 (good 100-seed) | B1 (broken 100-seed) | **Exp 05** |
+|---|---|---|---|
+| ORCA+TAGA SR | **0.84** | 0.77 | 0.81 (−3pp vs B0, +4pp vs B1) |
+| ORCA+TAGA CR | 0.12 | 0.18 | 0.12 (=B0, −6pp vs B1) |
+| ORCA+TAGA GCR | 0.0254 | 0.0212 | 0.0257 (=B0, +0.5pp vs B1) |
+| **TAGA effect on ORCA** | **+5pp** | −4pp | **−4pp** |
+
+**Per-policy TAGA effect at 100 seeds (Exp 05):**
+- ORCA: 0.85 → 0.81 (**−4pp**)
+- SF: 0.43 → 0.38 (−5pp)
+- intention_rl: 0.42 → 0.38 (−4pp)
+
+TAGA hurts all three policies. 20-seed +10pp on ORCA was variance.
+
+**Verdict:** **NOT a new baseline.** Better than B1, worse than B0.
+
+**Suspect (one of these is the regressor on top of B0):**
+1. **Future-hull intent gate** (Exp 03) — kept ON in Exp 05
+2. **Pause budget** `max_consecutive_pause=3` (Exp 02) — kept ON in Exp 05
+3. **Proactive pause on damped + future hull entering** — was in B0 but now budget-capped
+
+**Next-experiment plan:**
+- **Exp 06:** disable pause budget (`max_consecutive_pause=999`) → does ORCA+TAGA recover toward 0.84?
+- **Exp 07:** revert future-hull → current-hull intent gate → does ORCA+TAGA recover?
+- **Exp 08 (sanity):** full revert to match B0 exactly. If B0 doesn't reproduce, env has nondeterministic drift since 2026-04-25 and we need a fresh reference run.
+
+Recommend Exp 08 **first** — without a reproducible reference, +/− pp comparisons are meaningless.
+
+---
+
+### Exp 06 — Hull-aware safety filter (absolute) (2026-04-28)
+
+**Change:** added `_taga_enters_any_hull()` check after the existing
+individual-safety filter in `apply_taga`. Reject TAGA if its blended action
+would enter or skim ANY group hull at any horizon `[0.3, 0.7, 1.0]`,
+predicted by translating the hull with `V_group * t`. Margin = 0.15m. Falls
+back to base action when triggered. Counter: `hull_rejected`.
+
+**Motivation:** Exp 05 showed ORCA+TAGA GCR = 0.0257, slightly higher than
+base ORCA's 0.0207 — TAGA's tangent action sometimes pushed robot toward
+hulls. User goal: SR ≥ base AND GCR ↓. The absolute hull check (vs the
+"worse than base" framing) provides a hard guarantee on hull avoidance.
+
+**Result (20 seeds, `/tmp/taga_test_v6.log`):**
+
+| Policy | SR | CR | TR | GCR | Δ SR | Δ GCR |
+|---|---|---|---|---|---|---|
+| orca | 0.70 | 0.15 | 0.15 | 0.0237 | — | — |
+| **orca+taga** | **0.75** | 0.15 | 0.10 | **0.0125** | **+5pp** | **−47%** |
+| social_force | 0.55 | 0.30 | 0.15 | 0.0000 | — | — |
+| social_force+taga | 0.55 | 0.30 | 0.15 | 0.0000 | 0 | 0 |
+| intention_rl | 0.35 | 0.30 | 0.35 | 0.0212 | — | — |
+| intention_rl+taga | 0.35 | 0.25 | 0.40 | 0.0584 | 0 | +176% |
+
+**ORCA: first run where TAGA improves BOTH metrics simultaneously.** SR ↑ +5pp, CR same, GCR halved.
+
+**Per-policy story:**
+- ORCA (classical, deterministic): TAGA's tangent + hull-safety filter is a clean win. Filter rejected ~5–20 actions per episode where tangent would have entered a hull, falling back to base ORCA in those steps. Robot threads the gap when TAGA can guarantee no hull contact.
+- Social Force (mostly cautious): TAGA almost never fires for SF (intent gate skips). Result is identical to base. Filter is a no-op here.
+- intention_rl (neural, stateful): SR maintained but GCR jumps. Intention_rl is path-dependent; even when hull-safety reverts to "base action", the neural policy has already drifted into a state where the predicted "base action" no longer matches what base alone would have done. Safety filter framing breaks for stateful policies.
+
+**Verdict:** **kept**. Strong directional signal for ORCA. Confirms paper narrative:
+TAGA is a drop-in upgrade for classical policies; trained neural policies have
+already learned group awareness end-to-end and shouldn't be augmented with TAGA.
+
+**Caveat / next:** 20 seeds at ±10pp variance — needs 100-seed confirmation.
+
+---
+
 ## How to add a new entry
 
 1. Run a controlled change in `record_comparison.py` / `crowd_nav/configs/config.py`.

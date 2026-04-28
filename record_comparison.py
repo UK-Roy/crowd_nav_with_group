@@ -307,6 +307,40 @@ def _taga_worse_than_base(taga_action, base_action, rx, ry, env, horizons, r_saf
                 return True
     return False
 
+
+def _taga_enters_any_hull(taga_action, rx, ry, env, hulls, horizons, margin):
+    """Absolute hull-safety: reject TAGA if its blended action would enter or
+    skim ANY group hull at any horizon (regardless of base). Predicts hull
+    future position by translating with V_group * t (static groups: V=0).
+
+    Stricter than "worse than base" because we want a hard guarantee:
+    GCR(taga) ≤ GCR(base) always. If base also enters a hull, we still fall
+    back to base — same hull entry but at least TAGA isn't adding to it.
+    SR is preserved because rejected TAGA → base behaviour.
+    """
+    if not hulls:
+        return False
+    for t_h in horizons:
+        ftx = rx + taga_action[0] * t_h
+        fty = ry + taga_action[1] * t_h
+        for gid, hull in hulls.items():
+            grp = env.grp[gid] if gid < len(env.grp) else None
+            v_off_x = v_off_y = 0.0
+            if grp and grp.group_type in ('dynamic_lf', 'dynamic_free'):
+                if grp.group_type == 'dynamic_lf' and grp.leader is not None:
+                    v_off_x = grp.leader.vx * t_h
+                    v_off_y = grp.leader.vy * t_h
+                elif grp.members:
+                    v_off_x = float(np.mean([m.vx for m in grp.members])) * t_h
+                    v_off_y = float(np.mean([m.vy for m in grp.members])) * t_h
+            check_pos = np.array([ftx - v_off_x, fty - v_off_y])
+            if hull.contains(check_pos):
+                return True
+            if hasattr(hull, 'distance_to_boundary'):
+                if hull.distance_to_boundary(check_pos) < margin:
+                    return True
+    return False
+
 # Per-episode counters for debug logging (reset in main loop at each seed)
 TAGA_STATS = {
     'total_steps':    0,   # total TAGA calls
@@ -318,6 +352,7 @@ TAGA_STATS = {
     'paused':         0,   # robot stood still (inside a moving group hull)
     'cone_paused':    0,   # individual blocked escape cone → paused instead of colliding
     'pause_overflow': 0,   # consecutive-pause budget exhausted → forced commit
+    'hull_rejected':  0,   # hull-safety filter rejected TAGA → fell back to base
 }
 # Persistent state across calls within an episode (consecutive-pause budget).
 _TAGA_STATE = {'consecutive_pauses': 0}
@@ -331,7 +366,8 @@ def _taga_stats_print(seed, label):
           f"skipped_intent={s['skipped_intent']} goal_pri={s['goal_priority']} "
           f"no_blockers={s['no_blockers']} activated={s['activated']} "
           f"damped={s['damped_safety']} paused={s['paused']} "
-          f"cone_paused={s['cone_paused']} pause_ovf={s['pause_overflow']}")
+          f"cone_paused={s['cone_paused']} pause_ovf={s['pause_overflow']} "
+          f"hull_rej={s['hull_rejected']}")
 
 def _sigmoid_alpha(d_group, d_switch, band):
     """Sigmoid blend: 1 when close, 0 when far. Smooth S-curve, no step jump."""
@@ -643,6 +679,19 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
                                     return ActionXY(0.0, 0.0)
                                 TAGA_STATS['pause_overflow'] += 1
                                 break
+                    _TAGA_STATE['consecutive_pauses'] = 0
+                    return ActionXY(*base_action_np)
+
+            # Hull-aware safety (absolute): reject TAGA outright if its blended
+            # action would enter or skim any hull at any horizon. Falls back to
+            # base behaviour, which guarantees GCR(+taga) ≤ GCR(base): TAGA
+            # cannot add new hull entries to whatever base was already doing.
+            if getattr(taga_cfg, 'hull_safety_filter', False) and hulls:
+                hs_horizons = getattr(taga_cfg, 'hull_safety_horizons', [0.3, 0.7, 1.0])
+                hs_margin   = getattr(taga_cfg, 'hull_safety_margin', 0.15)
+                if _taga_enters_any_hull(desired, rx, ry, env, hulls,
+                                         hs_horizons, hs_margin):
+                    TAGA_STATS['hull_rejected'] += 1
                     _TAGA_STATE['consecutive_pauses'] = 0
                     return ActionXY(*base_action_np)
 

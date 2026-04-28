@@ -181,6 +181,15 @@ class Config(object):
     # P3: Debug logging — prints per-episode TAGA activity summary
     taga.debug_log           = True
 
+    # Hull-aware safety filter (Exp 06): reject TAGA if the blended action
+    # would enter/graze any group hull MORE than the base action would.
+    # Goal: drive GCR down without sacrificing SR — TAGA only commits when it
+    # strictly reduces hull intrusion vs base. Translates each hull by
+    # V_group * t to predict where it will be at each horizon.
+    taga.hull_safety_filter   = True
+    taga.hull_safety_margin   = 0.15   # m: extra clearance from hull boundary
+    taga.hull_safety_horizons = [0.3, 0.7, 1.0]
+
     # Anti-velocity tangent for dynamic groups (new):
     # For dynamic_lf / dynamic_free groups, pick the CW/CCW tangent that best
     # combines (a) alignment with -V_group (escape opposite to group travel) and
