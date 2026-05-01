@@ -353,6 +353,7 @@ TAGA_STATS = {
     'cone_paused':    0,   # individual blocked escape cone → paused instead of colliding
     'pause_overflow': 0,   # consecutive-pause budget exhausted → forced commit
     'hull_rejected':  0,   # hull-safety filter rejected TAGA → fell back to base
+    'direction_rejected': 0, # direction-shift guard rejected TAGA → fell back to base
 }
 # Persistent state across calls within an episode (consecutive-pause budget).
 _TAGA_STATE = {'consecutive_pauses': 0}
@@ -367,7 +368,7 @@ def _taga_stats_print(seed, label):
           f"no_blockers={s['no_blockers']} activated={s['activated']} "
           f"damped={s['damped_safety']} paused={s['paused']} "
           f"cone_paused={s['cone_paused']} pause_ovf={s['pause_overflow']} "
-          f"hull_rej={s['hull_rejected']}")
+          f"hull_rej={s['hull_rejected']} dir_rej={s['direction_rejected']}")
 
 def _sigmoid_alpha(d_group, d_switch, band):
     """Sigmoid blend: 1 when close, 0 when far. Smooth S-curve, no step jump."""
@@ -694,6 +695,23 @@ def apply_taga(obs, base_action_np, robot, env, safety_ctrl, config, device):
                     TAGA_STATS['hull_rejected'] += 1
                     _TAGA_STATE['consecutive_pauses'] = 0
                     return ActionXY(*base_action_np)
+
+            # Direction-shift guard (Exp 08): reject TAGA's blended action when
+            # it points more than `direction_max_angle` degrees away from base.
+            # Big direction shifts derail otherwise-OK base trajectories — the
+            # 3pp SR cost we observed at Exp 07 came mostly from these.
+            if getattr(taga_cfg, 'direction_guard', True):
+                base_norm    = float(np.linalg.norm(base_action_np))
+                desired_norm = float(np.linalg.norm(desired))
+                if base_norm > 1e-6 and desired_norm > 1e-6:
+                    cos_angle = float(np.dot(base_action_np, desired)) / (base_norm * desired_norm)
+                    cos_angle = max(-1.0, min(1.0, cos_angle))
+                    angle_deg = math.degrees(math.acos(cos_angle))
+                    max_angle = getattr(taga_cfg, 'direction_max_angle', 30.0)
+                    if angle_deg > max_angle:
+                        TAGA_STATS['direction_rejected'] += 1
+                        _TAGA_STATE['consecutive_pauses'] = 0
+                        return ActionXY(*base_action_np)
 
             TAGA_STATS['activated'] += 1
 

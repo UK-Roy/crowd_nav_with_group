@@ -186,9 +186,17 @@ class Config(object):
     # Goal: drive GCR down without sacrificing SR — TAGA only commits when it
     # strictly reduces hull intrusion vs base. Translates each hull by
     # V_group * t to predict where it will be at each horizon.
-    taga.hull_safety_filter   = True
+    taga.hull_safety_filter   = False
     taga.hull_safety_margin   = 0.15   # m: extra clearance from hull boundary
     taga.hull_safety_horizons = [0.3, 0.7, 1.0]
+
+    # Direction-shift guard (Exp 08): reject TAGA's blended action if its
+    # direction differs from base_action by more than direction_max_angle.
+    # Rationale: at base SR = 0.84, most failures TAGA could fix happen when
+    # base is already aiming somewhat in the right direction — small tangent
+    # corrections are useful, big redirections derail otherwise-OK trajectories.
+    taga.direction_guard      = False
+    taga.direction_max_angle  = 30.0   # degrees
 
     # Anti-velocity tangent for dynamic groups (new):
     # For dynamic_lf / dynamic_free groups, pick the CW/CCW tangent that best

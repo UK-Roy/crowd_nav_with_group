@@ -176,7 +176,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data',       default='gram_v2_data')
     parser.add_argument('--save',       default='trained_models/gram_v2/phase2')
-    parser.add_argument('--phase1',     default='trained_models/gram_v2/phase1/best.pt',
+    parser.add_argument('--phase1',     default='trained_models/gram_v2/phase1/B/best.pt',
                         help='Phase 1 checkpoint to initialise encoder + edge_net')
     parser.add_argument('--epochs',     type=int,   default=60)
     parser.add_argument('--batch',      type=int,   default=256)
@@ -267,7 +267,7 @@ def main():
 
     # Find optimal threshold on val, apply to test
     from gram_v2_train_phase1 import evaluate as evaluate_p1
-    val_m  = evaluate_p1(model, val_loader, device)
+    val_m  = evaluate_p1(model, val_loader, device, variant='B')
     best_t, _ = find_best_threshold(val_m['probs'], val_m['gt'])
     print(f"Optimal threshold (val): {best_t:.2f}")
 

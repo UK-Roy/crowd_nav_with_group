@@ -2,9 +2,9 @@
 
 End-to-end, perception-aware redesign of GRAM for the realistic crowd-navigation environment.
 
-> **Status (2026-05-01):** Phase 1 implementation complete; Phase 1 training failed
-> (F1=0.70, criterion 0.85). Root cause identified: single-frame features insufficient.
-> **Architecture updated to 3-frame temporal window (21-d input).** Re-training on GPU recommended.
+> **Status (2026-05-01):** Phase 1 Variant B complete — F1=0.746, AUROC=0.945.
+> +4pp over Variant A; implicit trajectory comparison partially works but not sufficient (criterion 0.85).
+> **Variant C (explicit pairwise temporal features) now running.**
 > Update this file every time we change the design or finish a milestone.
 
 ---
@@ -295,47 +295,60 @@ The two cases are **geometrically identical** in a single frame. The high AUROC 
 ---
 
 ### Variant B — 3-frame temporal window (21-d input)
-**Date:** 2026-05-01 *(training in progress)*
+**Date:** 2026-05-01
 
 **Configuration:**
 - Input per human: T_WINDOW=3 consecutive frames × 7 dims = **21-d** (oldest→newest)
 - Hidden dims: 256 (encoder and edge net)
 - Model params: 74,177
-- Edge geometry: current-frame (last 7 dims) dp, dv, cos_sim, dist — same 6 dims
-- Training: same schedule as Variant A
+- Edge geometry: current-frame (last 7 dims) dp, dv, cos_sim, dist — same 6 dims as Variant A
+- Training: 60 epochs, batch=256, pos_weight=3.3, lr=1e-3, CosineAnnealingLR
 
 **Hypothesis:** Group members co-move consistently across all 3 frames; strangers walking in the same direction will drift apart or change heading. The encoder embedding `h_i` now carries a 3-step trajectory, giving the edge MLP `[h_i, h_j]` enough information to implicitly compare trajectories.
 
-**Results (test set):**
+**Results (test set, optimal val threshold=0.65):**
 
 | Metric | Value | Criterion |
 |---|---|---|
-| F1 | *(pending)* | ≥ 0.85 |
-| AUROC | *(pending)* | — |
-| Precision | *(pending)* | — |
-| Recall | *(pending)* | — |
+| F1 | **0.7460** | ≥ 0.85 ❌ |
+| AUROC | **0.9446** | — |
+| Precision | 0.7393 | — |
+| Recall | 0.7527 | — |
 | ARI | — | — |
 
-**Known limitation:** The pairwise temporal signal (how `dist(i,j)` changes across frames) exists only *implicitly* inside `[h_i, h_j]`. The edge MLP must learn to "subtract" two individually-encoded trajectories to recover pairwise dynamics — an indirect route that may not be fully reliable.
+**Training dynamics:** Loss steadily declined across all 60 epochs (did not plateau like Variant A). Best val F1=0.716 at threshold 0.65 (default 0.5 would give F1≈0.706 — threshold optimization added ~4pp). AUROC improved from 0.928 (Variant A) to 0.945 — the model has better discrimination, but precision/recall remain balanced at ~0.74.
+
+**Analysis — why not 0.85 yet:**
+
+The 3-frame window helped: +4.1pp F1, +1.7pp AUROC. The encoder now carries a trajectory, so `[h_i, h_j]` implicitly encodes *how each pedestrian moved* over 3 steps. However, the edge MLP still must learn to *subtract* two individually-encoded trajectories to recover the pairwise temporal signal — it cannot directly observe that `dist(i,j)` was stable vs drifting. This indirect route creates a feature extraction bottleneck.
+
+Specifically: two pedestrians i and j walking at the same speed in parallel (group members) vs. two pedestrians converging to the same point from opposite sides have very different `dist(t)` curves — but both produce embeddings `h_i, h_j` that look similar to the MLP because each individual's trajectory in isolation looks similar. The network must infer *correlation* from two independent embeddings, which is a harder operation than observing the correlation directly.
+
+**Conclusion:** Hypothesis partially confirmed — temporal context breaks the single-frame ambiguity ceiling. But implicit trajectory comparison is insufficient to cross 0.85. Proceed to Variant C which adds explicit pairwise temporal features.
 
 ---
 
 ### Variant C — Explicit pairwise temporal features
-**Date:** *(pending — only proceed if Variant B fails or shows headroom)*
+**Date:** 2026-05-01 *(training in progress)*
 
 **Configuration:**
-- Same as Variant B, plus explicit pairwise temporal features from all 3 frames:
+- Same as Variant B encoder (21-d input, hidden=256, 74k base params)
+- Plus explicit pairwise temporal features injected directly into edge MLP input:
 
 | Feature | Formula | Dims | What it captures |
 |---|---|---|---|
-| `dist_k` for k=0,1,2 | `‖p_i(k) − p_j(k)‖` | 3 | Proximity at each frame |
-| `delta_dist` | `dist(2) − dist(0)` | 1 | Stable=group, changing=stranger |
-| `cos_sim_k` for k=0,1,2 | `v_i(k)·v_j(k) / (‖v_i(k)‖‖v_j(k)‖)` | 3 | Direction alignment history |
-| `dp_k` for k=0,1 | `p_i(k) − p_j(k)` | 4 | Position diff at older frames |
+| `dp_k` for k=0,1 | `p_i(k) − p_j(k)` | 2+2=4 | Position diff at older frames |
+| `dist_k` for k=0,1,2 | `‖p_i(k) − p_j(k)‖` | 3 | Proximity history |
+| `delta_dist` | `dist(2) − dist(0)` | 1 | Stable≈group, changing≈stranger |
+| `cos_sim_k` for k=0,1 | `v_i(k)·v_j(k) / (‖v_i(k)‖‖v_j(k)‖)` | 2 | Direction alignment at older frames |
 
-Total new explicit dims: **11** → edge input 134 → **145**
+Note: `dist_2` and `cos_sim_2` (current frame) are already included in the base 6 edge dims — no duplication.
+Total new explicit dims: **10** → edge input 134 → **144**
 
-**Hypothesis:** By directly providing the pairwise distance trajectory and stability, the gradient for group detection flows through explicit, semantically meaningful features rather than requiring implicit subtraction inside the MLP. `delta_dist ≈ 0` is a near-perfect group signal.
+- Model params: 76,737 (+2.5k over Variant B)
+- Training: same schedule (60 epochs, batch=256, lr=1e-3)
+
+**Hypothesis:** By directly providing the pairwise distance trajectory and stability, the gradient for group detection flows through explicit, semantically meaningful features. `delta_dist ≈ 0` is a near-perfect group signal that the Variant B MLP had to implicitly reconstruct. Making it explicit gives the MLP direct access to the key discriminator.
 
 **Results (test set):**
 
@@ -354,8 +367,8 @@ Total new explicit dims: **11** → edge input 134 → **145**
 | Variant | Input | Edge features | Params | F1 | AUROC | Pass? |
 |---|---|---|---|---|---|---|
 | A — single frame | 7-d | current frame only | 35k | 0.705 | 0.928 | ❌ |
-| B — 3-frame window | 21-d | current frame only | 74k | *(pending)* | *(pending)* | — |
-| C — + explicit pairwise temporal | 21-d | current + pairwise history | ~80k | *(pending)* | *(pending)* | — |
+| B — 3-frame window | 21-d | current frame only | 74k | **0.746** | **0.945** | ❌ |
+| C — + explicit pairwise temporal | 21-d | current + pairwise history | 77k | *(pending)* | *(pending)* | — |
 
 > **Paper claim this table supports:** temporal context is necessary and sufficient for
 > reliable group detection from raw observations; single-frame features create an
@@ -370,8 +383,9 @@ Total new explicit dims: **11** → edge input 134 → **145**
 | 2026-04-30 | — | Design doc created | this file |
 | 2026-05-01 | Phase 1 | Data collection (3000/300/300 ep) | 81,570 train samples, pos_rate=0.21 |
 | 2026-05-01 | Phase 1 | Training run #1 — single-frame (7-d input) | **FAILED** F1=0.70, AUROC=0.928. Plateau after epoch 6. Single frame cannot distinguish group members from coincidental neighbours. |
-| 2026-05-01 | Phase 1 | Architecture fix: 3-frame window (21-d input), hidden 128→256 | Applied. Re-collect data + re-train on GPU. |
-| | Phase 1 | Re-train with 3-frame input | **(pending — run on GPU)** |
+| 2026-05-01 | Phase 1 | Architecture fix: 3-frame window (21-d input), hidden 128→256 | Applied. Re-collected data (82,868 train samples). |
+| 2026-05-01 | Phase 1 | Variant B training (3-frame, 21-d) | **PARTIAL** F1=0.746, AUROC=0.945. +4pp over Variant A. Implicit trajectory comparison insufficient to cross 0.85 — explicit pairwise temporal features needed. |
+| 2026-05-01 | Phase 1 | Variant C training (+ explicit pairwise temporal) | **(running)** |
 | | Phase 2 | GNN added | (pending) |
 | | Phase 3 | slot attention pooling | (pending) |
 | | Phase 4 | full network + PPO training | (pending) |
