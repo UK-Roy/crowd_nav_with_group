@@ -34,6 +34,9 @@ conda-meta/
 .DS_Store
 Thumbs.db
 
+# --- GRAM-v2 generated data (large, not tracked) ---
+gram_v2_data/
+
 # --- Scratch / local-only scripts ---
 train1.py
 test1.py
@@ -48,6 +51,7 @@ Python-RVO2
 !README.md
 !**/README.md
 !TAGA_EXPERIMENT_LOG.md
+!GRAM_V2_DESIGN.md
 
 # --- Reference papers ---
 references/

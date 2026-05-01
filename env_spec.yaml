@@ -1,0 +1,242 @@
+# ============================================================
+# CUSTOM ENVIRONMENT SPECIFICATION
+# Generated for integration with an external navigation policy.
+# Source: crowd_nav_with_group  |  Date: 2026-04-30
+# ============================================================
+
+metadata:
+  env_name: CrowdSimVarNum — Group-Aware Crowd Navigation
+  source_files:
+    - crowd_sim/envs/crowd_sim.py            # base class (CrowdSim, gym.Env)
+    - crowd_sim/envs/crowd_sim_var_num.py    # primary env (CrowdSimVarNum)
+    - crowd_sim/envs/crowd_sim_pred.py       # prediction-augmented subclass
+    - crowd_sim/envs/crowd_sim_pred_real_gst.py  # training env (GST predictor)
+    - crowd_sim/envs/utils/state.py          # FullState / ObservableState namedtuples
+    - crowd_sim/envs/utils/agent.py          # get_full_state_list_noV, clip_action
+    - crowd_sim/envs/utils/group.py          # Group dataclass
+    - crowd_sim/envs/garn_reward.py          # optional GARN group reward
+    - crowd_nav/configs/config.py            # all numeric defaults
+  framework: gym   # gym 0.21-style; import gym; class CrowdSim(gym.Env)
+  runnable: true   # verified: env.reset() + 5× step() ran without errors
+  notes: |
+    The formal observation_space (declared in set_robot()) lists only 5 keys.
+    The actual ob dict returned by reset()/step() contains 10+ keys (see
+    observation.fields below). Any external policy must consume the full dict.
+
+    Invisible-human slots in spatial_edges / velocity_edges are filled with
+    15.0 (sentinel), NOT zero. Clamp or mask before feeding to a network.
+
+    env.configure(config) must be called before set_robot(). The env also
+    requires thisSeed, nenv, phase, case_counter, case_capacity, case_size
+    to be set manually if not using the training harness (rl/networks/envs.py).
+
+world:
+  frame: world          # absolute coordinates; robot_node contains absolute px, py
+  units: m
+  size: [12.0, 12.0]    # arena_size=6 → world spans [-6, 6] on both axes
+  axes: "x right, y up, theta CCW from +x axis (radians)"
+  dt: 0.25              # config.env.time_step = 0.25 s; time_limit = 56.25 s = 225 steps
+
+robot:
+  radius: 0.3           # config.robot.radius, m
+  shape: circle
+  control_type: velocity  # holonomic (vx, vy); config.action_space.kinematics = 'holonomic'
+  max_linear_speed: 1.0   # v_pref; clip_action clips ‖action‖ to v_pref = 1.0 m/s
+  max_angular_speed: null  # N/A — holonomic, no rotational command
+  v_pref: 1.0             # config.robot.v_pref
+  sensor_range: 5.0       # config.robot.sensor_range, m
+  pose_observable: true   # robot_node = [px, py, r, gx, gy, v_pref, theta]
+  velocity_observable: true  # temporal_edges = [vx, vy]
+
+action_space:
+  type: continuous
+  shape: [2]
+  bounds:
+    low: [-inf, -inf]   # formal Box is unbounded; clip_action enforces ‖a‖ ≤ v_pref
+    high: [inf, inf]    # effective range: each component in roughly [-1.0, 1.0]
+  meaning: |
+    action[0] = vx  (desired velocity x-component, m/s, world frame)
+    action[1] = vy  (desired velocity y-component, m/s, world frame)
+    clip_action rescales the vector so ‖[vx,vy]‖ ≤ robot.v_pref (1.0 m/s).
+    For ORCA/SocialForce policies the action is computed internally; the
+    passed tensor is ignored (env.step re-derives from human states).
+
+observation:
+  type: dict
+  raw_shape: |
+    Formal observation_space (set_robot):
+      robot_node:          Box(1, 7)   float32
+      temporal_edges:      Box(1, 2)   float32
+      spatial_edges:       Box(20, 2)  float32
+      detected_human_num:  Box(1,)     float32
+      visible_masks:       Box(20,)    bool
+    Additional keys returned at runtime (not in formal space):
+      velocity_edges:      (20, 2)     float64
+      direction_consistency: (20,)     float64
+      clusters:            (20,)       int32
+      group_members:       dict {group_id: [human_ids]}
+      grp:                 bool        (True if any group detected)
+      group_centroids:     (3, 2)      float64
+      group_radii:         (3,)        float64
+  fields: |
+    robot_node           shape=(1,7)  float32
+      [px, py, radius, gx, gy, v_pref, theta]
+      All in absolute world frame. Note: velocity NOT included here; see temporal_edges.
+
+    temporal_edges       shape=(2,)   float64  (declared Box(1,2) but returned flat)
+      [vx, vy] — robot's current absolute velocity in world frame (m/s)
+
+    spatial_edges        shape=(20, 2)  float64
+      Row i = relative position of human[i] w.r.t. robot: [px_i - robot.px, py_i - robot.py]
+      Invisible / out-of-sensor-range humans: filled with 15.0 (sentinel, not inf)
+      Indexed by human.id (stable within episode, not sorted by distance by default)
+
+    velocity_edges       shape=(20, 2)  float64
+      Row i = relative velocity of human[i] w.r.t. robot: [vx_i - robot.vx, vy_i - robot.vy]
+      Invisible humans: 15.0 sentinel
+
+    visible_masks        shape=(20,)  bool
+      visible_masks[i] = True if human i is within sensor_range AND FOV
+
+    detected_human_num   shape=(1,)   float32
+      Number of humans currently visible; minimum clamped to 1 even if 0 visible
+
+    direction_consistency  shape=(20,)  float64
+      Cosine similarity between robot velocity and each human's velocity.
+      Currently all-15.0 (computation block is commented out in source).
+
+    clusters             shape=(20,)  int32
+      Ground-truth group-cluster label per human slot. -1 = no group / individual.
+      Same indexing as spatial_edges (by human.id).
+
+    group_members        dict {int: list[int]}
+      Maps group_id → list of human.id values belonging to that group.
+      Empty dict if no groups detected.
+
+    grp                  bool
+      True if at least one group was detected this step.
+
+    group_centroids      shape=(num_groups, 3)→(3, 2)  float64
+      Absolute position of each group's centroid [cx, cy].
+      Undetected groups: 15.0 sentinel.
+
+    group_radii          shape=(3,)  float64
+      Bounding radius (convex-hull bounding_radius if Phase E on, else
+      max member distance + 0.1 m buffer) per group. Undetected: 15.0.
+
+pedestrians:
+  available: true
+  per_agent_fields: [px_rel, py_rel, vx_rel, vy_rel]  # relative to robot, from spatial/velocity edges
+  # Full ObservableState = [px, py, vx, vy, radius] available via last_human_states (internal)
+  has_orientation: false   # theta not in ObservableState; not exposed in obs
+  has_velocity: true
+  has_id_tracking: true    # human.id is stable within an episode; obs indexed by id
+  typical_count: 20        # config.sim.human_num = 20
+  max_count: 20            # human_num_range = 0 → always exactly 20
+
+obstacles:
+  available: true
+  representation: list_of_circles
+  # static_f group members have isObstacle=True, v_pref=0; appear in humans list as immobile agents
+  per_obstacle_fields: [px, py, vx, vy, radius]   # via ObservableState
+  static: false   # mixed: static_f members are static, dynamic_lf / dynamic_free move
+  typical_count: 9   # 3 groups × 3 members (min_size=3); exact count varies by group type
+  max_count: 12      # 3 groups × 4 members (max_size=4)
+
+groups:
+  available: true
+  detection_method: given   # config.group.ground_truth = True; human.group_id read directly
+  # DBSCAN block exists but is commented out (crowd_sim_var_num.py:338-408)
+  typical_count: 3          # config.group.num_groups = 3
+  max_count: 3
+
+goal:
+  type: fixed_point
+  representation: "(gx, gy) in world frame, absolute coords"
+  observable: true    # robot_node[3:5] = [gx, gy]
+  example: "robot spawned at (4.47, -3.45), goal at (-5.51, -1.23)  [seed=0, test]"
+
+episode:
+  termination_conditions:
+    - "robot reaches goal: ‖robot_pos − goal‖ < robot.radius (0.3 m) → reward +10, done=True"
+    - "collision: closest_dist between robot and any human < 0 → reward -20, done=True"
+    - "timeout: global_time ≥ time_limit − 1 step (step 224 of 225) → reward 0, done=True"
+  max_steps: 225   # time_limit=56.25 s / dt=0.25 s
+  reward: |
+    Priority order (first matching condition wins):
+    1. Timeout:    reward = 0
+    2. Collision:  reward = -20  (config.reward.collision_penalty)
+    3. ReachGoal:  reward = +10  (config.reward.success_reward)
+    4. Discomfort (individual, dist < 0.25 m):
+         reward = (dmin - 0.25) * 10 * 0.25   [negative, proportional to closeness]
+    5. Potential:  reward = 2 * (−|dist_to_goal_prev| − potential)
+         potential-based shaping; drives the robot toward goal each step
+
+    Optional GARN group reward (reward.use_garn_reward = True, default ON):
+      R_grp added on top of the above; based on group intrusion distance.
+      See crowd_sim/envs/garn_reward.py for Eq. 4–8 (Lu et al. 2025).
+
+    Group discomfort (dist to hull < 0.07 m):
+      reward += (dmingrp - 0.07) * 12 * 0.25  (only when use_garn_reward=False)
+
+counts:
+  # Upper bounds for tensor pre-allocation in an external policy.
+  max_obstacles: 12      # 3 groups × 4 members maximum
+  max_pedestrians: 20    # fixed at config.sim.human_num = 20
+  max_groups: 3          # config.group.num_groups = 3
+
+sample_observation: |
+  # Copied verbatim from probe_env.py run (seed=0, test phase, step=reset)
+  robot_node: [4.469694422184425, -3.4520078289273606, 0.3, -5.51148450277093, -1.233666463851531, 1, 1.5707963267948966]
+  temporal_edges: [0, 0]
+  clusters: [ 0  0  0  0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1]
+  group_members: {0: [0, 1, 2, 3]}
+  visible_masks: [True True True True True False ... False]  # 5 visible, 15 out-of-range
+  spatial_edges (first 5 rows, rest are [15, 15]):
+    [[-3.054,  0.492],
+     [-3.102,  1.894],
+     [-0.139, -3.791],
+     [-4.051,  0.827],
+     [-4.952,  1.526]]
+  velocity_edges: all zeros for visible humans (static group), 15.0 for invisible
+  direction_consistency: [15.0 × 20]  # computation disabled in source
+  detected_human_num: 5
+  grp: True
+  group_centroids: [[0.680, -2.267], [15.0, 15.0], [15.0, 15.0]]
+  group_radii: [1.311, 15.0, 15.0]
+
+sample_episode: |
+  # 5 steps, random actions, seed=0 test phase
+  # format: step | action[vx,vy] | reward | done | info
+  reset  | —                   | —       | —     | robot=(4.47,-3.45) goal=(-5.51,-1.23)
+  step 1 | [ 0.9517,  0.9575]  | 0.0000  | False | Nothing
+  step 2 | [ 0.8682,  0.9402]  | 0.1032  | False | Nothing (potential reward: moved toward goal)
+  step 3 | [ 0.7379,  0.6920]  | 0.1630  | False | Nothing
+  step 4 | [-1.1118, -0.7250]  | 0.1959  | False | Nothing
+  step 5 | [ 0.3422, -0.0382]  | 0.2087  | False | Nothing
+  # Observation fields stable across all 5 steps:
+  #   - same 5 humans visible (static group_0 + 1 individual)
+  #   - group_centroids and group_radii essentially unchanged (static group)
+  #   - velocity_edges for visible humans track -robot.velocity each step
+  #   - direction_consistency all-15 (feature disabled)
+
+unknowns_or_blockers: |
+  1. direction_consistency: field exists in ob but computation is commented out
+     (crowd_sim_var_num.py:364-396). Always returns 15.0. Do not use.
+
+  2. Action bounds: formal Box is (-inf, inf). The effective clipping to v_pref=1.0 m/s
+     happens inside clip_action() for neural policies only. ORCA/SF override the action
+     entirely. External policies should clip ‖action‖ to 1.0 before passing.
+
+  3. robot_node theta: initialized to pi/2 in test mode (probe_env.py line 21) and
+     does not update during holonomic steps (theta tracks orientation, not velocity
+     direction). In training it updates only for unicycle kinematics. For holonomic
+     policies theta can be treated as a static context feature.
+
+  4. The formal observation_space does not include velocity_edges, clusters,
+     group_members, grp, group_centroids, or group_radii. These are returned
+     at runtime but an env.observation_space.contains() check will fail for the
+     full ob dict. gym.spaces.Dict wrapping must be extended if needed.
+
+  5. human_num_range = 0 (config), so human count is always exactly 20.
+     max_human_num = human_num + human_num_range = 20. Tensor sizes are fixed.
