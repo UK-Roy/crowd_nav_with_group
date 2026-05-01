@@ -2,9 +2,10 @@
 
 End-to-end, perception-aware redesign of GRAM for the realistic crowd-navigation environment.
 
-> **Status:** design only. No code written yet. All decisions here are
-> subject to revision once we start implementing. Update this file every
-> time we change the design or finish a milestone.
+> **Status (2026-05-01):** Phase 1 implementation complete; Phase 1 training failed
+> (F1=0.70, criterion 0.85). Root cause identified: single-frame features insufficient.
+> **Architecture updated to 3-frame temporal window (21-d input).** Re-training on GPU recommended.
+> Update this file every time we change the design or finish a milestone.
 
 ---
 
@@ -110,15 +111,22 @@ Group representation is built in `compute_group_embeddings()` by:
 ### 3.1 Stage details
 
 **Stage 1 — Pedestrian Feature Encoder**
-- Input per human: `[p_rel_x, p_rel_y, v_rel_x, v_rel_y, ‖v_rel‖, sin(θ_v), cos(θ_v)]` — 7 dims
-- Mask out invalid humans (the `15.0` sentinel slots) before encoding so we never feed sentinels into the MLP.
-- 2-layer MLP: `7 → 64 → 64`, ReLU, dropout 0.1.
+- Input per human: 3 consecutive frames stacked (oldest→newest), 7 dims/frame → **21-d total**.
+  - Frame layout: `[p_rel_x, p_rel_y, v_rel_x, v_rel_y, ‖v_rel‖, sin(θ_v), cos(θ_v)]`
+  - Rationale: single-frame features cannot distinguish group members from coincidental neighbours
+    walking in the same direction. Three frames expose velocity trends — group members co-move
+    consistently; strangers drift apart. (Validated by Phase 1 failure: single-frame AUROC=0.928
+    but F1 ceiling at 0.70 regardless of threshold.)
+- Mask out invalid humans before encoding.
+- 2-layer MLP: `21 → 256 → 64`, LayerNorm, ReLU, dropout 0.1.
 
 **Stage 2 — Pairwise Edge Network**
 - Compute pairwise edge features for all `N×N` pairs (N=20 max).
 - Edge feature: `[h_i, h_j, p_i - p_j, v_i - v_j, cos(v_i, v_j), ‖p_i - p_j‖]` — 134 dims.
-- 2-layer MLP: `134 → 64 → 1`, sigmoid.
-- Mask self-loops to 0; mask invalid-human pairs to 0.
+  - `h_i, h_j` carry 3-frame temporal context from the encoder.
+  - Geometry (`dp, dv, dist`) uses only the **most recent frame** (last 7 dims of input).
+- 3-layer MLP: `134 → 256 → 64 → 1`, LayerNorm on first layer, sigmoid output.
+- Symmetrised: `W = (W_raw + W_raw.T) / 2`. Mask self-loops and invisible pairs to 0.
 - Output `W ∈ [0,1]^(N×N)` — soft groupness adjacency.
 
 **Stage 3 — GNN Message Passing**
@@ -239,7 +247,7 @@ Each phase has a measurable acceptance criterion. We move to the next phase only
 | Slot attention collapses (all slots learn the same prototype) | Add slot diversity loss; init slots from random Gaussian; limit iterations. |
 | GNN with soft adjacency overfits to GT membership and ignores RL signal | Anneal `L_group` weight from 0.5 → 0.05 over training; use it as a regularizer, not a target. |
 | Cold-start at test time fails because env still emits `clusters` and the policy comes to depend on them via the dataloader | Strict separation: at inference, the network sees ONLY raw features. Add an integration test that asserts no `clusters` access on inference path. |
-| 7-d per-human input is too lean for the GNN to discover groups | Add `time-since-last-velocity-change`, or use a small temporal MLP over the last 4 frames of (p, v) per human. |
+| ~~7-d per-human input is too lean for the GNN to discover groups~~ | **Resolved (2026-05-01):** Confirmed in Phase 1 run #1 — single-frame AUROC=0.928 but F1 ceiling 0.70. Fixed by stacking T_WINDOW=3 frames → 21-d input. |
 | End-to-end training is unstable with 3 losses | Train Stages 1–3 with only `L_group` first (Phase 1–2), then freeze partial weights and add RL loss. |
 
 ---
@@ -249,7 +257,10 @@ Each phase has a measurable acceptance criterion. We move to the next phase only
 | Date | Phase | Milestone | Outcome |
 |---|---|---|---|
 | 2026-04-30 | — | Design doc created | this file |
-| | Phase 1 | encoder + edges + L_group offline | (pending) |
+| 2026-05-01 | Phase 1 | Data collection (3000/300/300 ep) | 81,570 train samples, pos_rate=0.21 |
+| 2026-05-01 | Phase 1 | Training run #1 — single-frame (7-d input) | **FAILED** F1=0.70, AUROC=0.928. Plateau after epoch 6. Single frame cannot distinguish group members from coincidental neighbours. |
+| 2026-05-01 | Phase 1 | Architecture fix: 3-frame window (21-d input), hidden 128→256 | Applied. Re-collect data + re-train on GPU. |
+| | Phase 1 | Re-train with 3-frame input | **(pending — run on GPU)** |
 | | Phase 2 | GNN added | (pending) |
 | | Phase 3 | slot attention pooling | (pending) |
 | | Phase 4 | full network + PPO training | (pending) |

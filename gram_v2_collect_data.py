@@ -1,25 +1,31 @@
 """
 GRAM-v2 Phase 1 — data collection.
 
-Runs ORCA-piloted rollouts and saves per-timestep observations + ground-truth
+Runs ORCA-piloted rollouts and saves 3-frame temporal windows + ground-truth
 pair-groupness labels to gram_v2_data/{train, val, test}.npz.
 
 GT labels use env-internal human.group_id — they are ONLY used here for
 supervision targets, never fed into the network at inference.
+
+Each sample is a T_WINDOW=3 consecutive-frame stack (oldest → newest):
+  feats[t] = [frame_{t-2}, frame_{t-1}, frame_t] concatenated → (20, 21)
+This gives the model velocity trend information: group members consistently
+co-move across frames, while strangers drift apart.
 
 Usage:
   python gram_v2_collect_data.py               # default: 3000/300/300 episodes
   python gram_v2_collect_data.py --train 500   # quick smoke-test
 
 Output files (per split):
-  feats  : float32 (T, 20, 7)   per-human feature vectors (zeros for invisible)
-  masks  : bool    (T, 20)       True = human visible this step
+  feats  : float32 (T, 20, 21)  3-frame stacked features (zeros for invisible)
+  masks  : bool    (T, 20)       True = human visible at current (newest) frame
   labels : float32 (T, 20, 20)  1.0 if both humans in the same group, else 0.0
 """
 
 import os, sys, argparse
 import numpy as np
 from tqdm import tqdm
+from collections import deque
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -27,9 +33,9 @@ from crowd_nav.configs.config import Config
 from crowd_sim.envs.crowd_sim_var_num import CrowdSimVarNum
 from crowd_sim.envs.utils.robot import Robot
 from crowd_nav.policy.orca import ORCA
+from crowd_nav.gram_v2.models import FEAT_DIM, T_WINDOW
 
-MAX_HUMANS = 20
-FEAT_DIM   = 7
+MAX_HUMANS   = 20
 SAMPLE_EVERY = 3   # collect 1 sample every N steps to reduce temporal correlation
 
 
@@ -102,7 +108,11 @@ def make_env(seed: int) -> CrowdSimVarNum:
 # ── Collection loop ───────────────────────────────────────────────────────────
 
 def collect(env, n_episodes: int, phase: str, desc: str):
-    """Run n_episodes and return (feats, masks, labels) numpy arrays."""
+    """Run n_episodes and return (feats, masks, labels) numpy arrays.
+
+    Each sample stacks T_WINDOW consecutive frames (oldest first) so the
+    model can observe velocity trends across time.
+    """
     env.phase = phase
 
     all_feats, all_masks, all_labels = [], [], []
@@ -111,27 +121,36 @@ def collect(env, n_episodes: int, phase: str, desc: str):
         ob = env.reset(phase=phase)
         done = False
         step = 0
+        # Rolling buffer of the last T_WINDOW single-frame feature arrays
+        frame_buf = deque(maxlen=T_WINDOW)
 
         while not done:
             ob, _, done, _ = env.step(np.zeros(2))   # ORCA acts internally
             step += 1
 
+            visible = ob['visible_masks'].astype(bool)  # (20,)
+            feats   = build_features(ob, visible)       # (20, 7)
+            frame_buf.append(feats)
+
             if step % SAMPLE_EVERY != 0:
                 continue
+            if len(frame_buf) < T_WINDOW:
+                continue   # not enough history yet
 
-            visible = ob['visible_masks'].astype(bool)  # (20,)
-            feats   = build_features(ob, visible)
-            labels  = build_pair_labels(env)
+            labels = build_pair_labels(env)
 
             # Skip steps where no groups are visible at all (not informative)
             if labels.sum() == 0 and visible.sum() < 3:
                 continue
 
-            all_feats.append(feats)
-            all_masks.append(visible)
+            # Stack frames oldest→newest: (20, 7*T_WINDOW) = (20, 21)
+            stacked = np.concatenate(list(frame_buf), axis=-1)
+
+            all_feats.append(stacked)
+            all_masks.append(visible)   # mask from current (newest) frame
             all_labels.append(labels)
 
-    return (np.array(all_feats,  dtype=np.float32),   # (T, 20, 7)
+    return (np.array(all_feats,  dtype=np.float32),   # (T, 20, 21)
             np.array(all_masks,  dtype=bool),          # (T, 20)
             np.array(all_labels, dtype=np.float32))    # (T, 20, 20)
 
@@ -140,7 +159,9 @@ def collect(env, n_episodes: int, phase: str, desc: str):
 
 def save_and_report(path: str, feats, masks, labels):
     np.savez_compressed(path, feats=feats, masks=masks, labels=labels)
-    T = len(feats)
+    T, _, input_dim = feats.shape
+    print(f"  Feature shape: (T={T:,}, N=20, input_dim={input_dim})  "
+          f"[{T_WINDOW} frames × {FEAT_DIM} dims]")
     # positive pair rate (upper triangle of each sample, masked to visible pairs)
     pos = labels.sum()
     vis_pairs = 0.0
