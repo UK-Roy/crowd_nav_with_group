@@ -164,6 +164,7 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
+    print("Data collection runs on CPU only (pure simulation, no neural network).")
 
     # Always collect in 'train' phase so calc_reward stays in circle mode
     # (phase='val'/'test' triggers future-trajectory reward that needs GST predictor).
