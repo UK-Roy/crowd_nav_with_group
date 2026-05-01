@@ -42,9 +42,12 @@ except ImportError:
 # ── Variant config ────────────────────────────────────────────────────────────
 
 VARIANTS = {
-    'A': dict(input_dim=FEAT_DIM,  enc_hidden=128, label='single-frame (7-d)'),
-    'B': dict(input_dim=INPUT_DIM, enc_hidden=256, label='3-frame window (21-d)'),
-    'C': dict(input_dim=INPUT_DIM, enc_hidden=256, label='3-frame + explicit pairwise temporal'),
+    'A': dict(input_dim=FEAT_DIM,  enc_hidden=128, use_pairwise_temporal=False,
+              label='single-frame (7-d)'),
+    'B': dict(input_dim=INPUT_DIM, enc_hidden=256, use_pairwise_temporal=False,
+              label='3-frame window (21-d)'),
+    'C': dict(input_dim=INPUT_DIM, enc_hidden=256, use_pairwise_temporal=True,
+              label='3-frame + explicit pairwise temporal'),
 }
 
 
@@ -230,7 +233,8 @@ def main():
         input_dim=vcfg['input_dim'],
         enc_hidden=vcfg['enc_hidden'],
         gnn_hidden=vcfg['enc_hidden'],
-        n_gnn_layers=0
+        n_gnn_layers=0,
+        use_pairwise_temporal=vcfg['use_pairwise_temporal']
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"GroupDetector params: {n_params:,}\n")

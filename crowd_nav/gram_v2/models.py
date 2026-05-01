@@ -68,20 +68,31 @@ class PedestrianEncoder(nn.Module):
 class PairwiseEdgeNetwork(nn.Module):
     """Stage 2: predict a symmetric groupness probability for every human pair.
 
-    Edge feature for pair (i, j)  [134 dims total]:
-      h_i, h_j      : 64 + 64   concatenated embeddings (carry 3-frame context)
-      dp_x, dp_y    : 2         position diff from current frame
-      dv_x, dv_y    : 2         velocity diff from current frame
-      cos_sim       : 1         cosine similarity of current-frame velocities
-      dist          : 1         Euclidean distance from current frame
+    Variant B edge feature [134 dims]:
+      h_i, h_j   : 64+64  embeddings (carry 3-frame context via encoder)
+      dp, dv     : 2+2    position/velocity diff — current frame
+      cos_sim    : 1      velocity direction alignment — current frame
+      dist       : 1      Euclidean distance — current frame
+
+    Variant C adds explicit pairwise temporal features [+10 dims = 144 total]:
+      dp_k       : 2+2    position diff at frames t-2 and t-1
+      dist_k     : 1+1+1  distance at frames t-2, t-1, t
+      delta_dist : 1      dist(t) - dist(t-2)  — stable≈group, changing≈stranger
+      cos_sim_k  : 1+1    velocity alignment at frames t-2 and t-1
 
     Output is symmetrised: W = (W_raw + W_raw.T) / 2  before masking.
     """
 
-    def __init__(self, embed_dim: int = EMBED_DIM):
+    # Extra dims added by pairwise temporal features (Variant C)
+    TEMPORAL_EXTRA = 10  # dp_0(2) + dp_1(2) + dist_0,1,2(3) + delta_dist(1) + cos_k0,1(2)
+
+    def __init__(self, embed_dim: int = EMBED_DIM,
+                 use_pairwise_temporal: bool = False):
         super().__init__()
+        self.use_pairwise_temporal = use_pairwise_temporal
+        extra = self.TEMPORAL_EXTRA if use_pairwise_temporal else 0
         self.net = nn.Sequential(
-            nn.Linear(embed_dim * 2 + 6, 256),
+            nn.Linear(embed_dim * 2 + 6 + extra, 256),
             nn.LayerNorm(256),
             nn.ReLU(),
             nn.Linear(256, 64),
@@ -89,14 +100,50 @@ class PairwiseEdgeNetwork(nn.Module):
             nn.Linear(64, 1),
         )
 
+    def _pairwise_temporal(self, full_feats: torch.Tensor) -> torch.Tensor:
+        """Compute explicit pairwise temporal features from all T_WINDOW frames.
+        full_feats : (B, N, 21)
+        Returns    : (B, N, N, 10)
+        """
+        N = full_feats.shape[1]
+        temporal = []
+        dists = []
+        for k in range(T_WINDOW):
+            p_k  = full_feats[:, :, k * FEAT_DIM     : k * FEAT_DIM + 2]   # (B,N,2)
+            v_k  = full_feats[:, :, k * FEAT_DIM + 2 : k * FEAT_DIM + 4]
+            vn_k = full_feats[:, :, k * FEAT_DIM + 4 : k * FEAT_DIM + 5]
+
+            dp_k   = p_k.unsqueeze(2) - p_k.unsqueeze(1)                   # (B,N,N,2)
+            dist_k = torch.norm(dp_k, dim=-1, keepdim=True)                 # (B,N,N,1)
+            dists.append(dist_k)
+
+            if k < T_WINDOW - 1:    # t-2 and t-1 only (t already in curr_feats)
+                temporal.append(dp_k)
+
+                v_i  = v_k.unsqueeze(2).expand(-1, -1, N, -1)
+                v_j  = v_k.unsqueeze(1).expand(-1, N, -1, -1)
+                vn_i = vn_k.unsqueeze(2).expand(-1, -1, N, -1)
+                vn_j = vn_k.unsqueeze(1).expand(-1, N, -1, -1)
+                cos_k = (v_i * v_j).sum(-1, keepdim=True) / (vn_i * vn_j + 1e-6)
+                temporal.append(cos_k)
+
+        # dist at all 3 frames + delta_dist
+        temporal += dists
+        delta_dist = dists[-1] - dists[0]
+        temporal.append(delta_dist)
+
+        return torch.cat(temporal, dim=-1)   # (B,N,N,10)
+
     def forward(self, h: torch.Tensor,
                 curr_feats: torch.Tensor,
-                mask: torch.Tensor) -> torch.Tensor:
+                mask: torch.Tensor,
+                full_feats: torch.Tensor = None) -> torch.Tensor:
         """
-        h          : (B, N, 64)   encoder embeddings (encode full T_WINDOW history)
-        curr_feats : (B, N, 7)    most-recent frame features for geometry
+        h          : (B, N, 64)   encoder embeddings
+        curr_feats : (B, N, 7)    most-recent frame (for dp, dv, cos_sim, dist)
         mask       : (B, N)       bool
-        Returns W  : (B, N, N)    symmetric groupness probabilities; 0 for invalid pairs
+        full_feats : (B, N, 21)   all frames — required when use_pairwise_temporal=True
+        Returns W  : (B, N, N)    symmetric groupness probabilities
         """
         N = h.shape[1]
 
@@ -107,9 +154,9 @@ class PairwiseEdgeNetwork(nn.Module):
         v      = curr_feats[:, :, 2:4]
         v_norm = curr_feats[:, :, 4:5]
 
-        dp   = p.unsqueeze(2) - p.unsqueeze(1)           # (B,N,N,2)
+        dp   = p.unsqueeze(2) - p.unsqueeze(1)
         dv   = v.unsqueeze(2) - v.unsqueeze(1)
-        dist = torch.norm(dp, dim=-1, keepdim=True)       # (B,N,N,1)
+        dist = torch.norm(dp, dim=-1, keepdim=True)
 
         v_i  = v.unsqueeze(2).expand(-1, -1, N, -1)
         v_j  = v.unsqueeze(1).expand(-1, N, -1, -1)
@@ -117,14 +164,19 @@ class PairwiseEdgeNetwork(nn.Module):
         vn_j = v_norm.unsqueeze(1).expand(-1, N, -1, -1)
         cos_sim = (v_i * v_j).sum(-1, keepdim=True) / (vn_i * vn_j + 1e-6)
 
-        edge_feat = torch.cat([h_i, h_j, dp, dv, cos_sim, dist], dim=-1)
-        logits    = self.net(edge_feat).squeeze(-1)        # (B,N,N)
+        parts = [h_i, h_j, dp, dv, cos_sim, dist]
+
+        if self.use_pairwise_temporal and full_feats is not None:
+            parts.append(self._pairwise_temporal(full_feats))
+
+        edge_feat = torch.cat(parts, dim=-1)
+        logits    = self.net(edge_feat).squeeze(-1)
 
         logits = (logits + logits.transpose(-2, -1)) / 2.0
         W      = torch.sigmoid(logits)
 
-        valid   = mask.unsqueeze(2).float() * mask.unsqueeze(1).float()
-        eye     = torch.eye(N, device=h.device).unsqueeze(0)
+        valid = mask.unsqueeze(2).float() * mask.unsqueeze(1).float()
+        eye   = torch.eye(N, device=h.device).unsqueeze(0)
         return W * valid * (1.0 - eye)
 
 
@@ -141,11 +193,13 @@ class GroupDetector(nn.Module):
 
     def __init__(self, input_dim: int = INPUT_DIM, embed_dim: int = EMBED_DIM,
                  enc_hidden: int = 256, gnn_hidden: int = 256,
-                 n_gnn_layers: int = 0, dropout: float = 0.1):
+                 n_gnn_layers: int = 0, dropout: float = 0.1,
+                 use_pairwise_temporal: bool = False):
         super().__init__()
-        self.feat_dim = FEAT_DIM
+        self.feat_dim              = FEAT_DIM
+        self.use_pairwise_temporal = use_pairwise_temporal
         self.encoder  = PedestrianEncoder(input_dim, enc_hidden, embed_dim, dropout)
-        self.edge_net = PairwiseEdgeNetwork(embed_dim)
+        self.edge_net = PairwiseEdgeNetwork(embed_dim, use_pairwise_temporal)
 
         if n_gnn_layers > 0:
             from crowd_nav.gram_v2.gnn import GroupGNN
@@ -166,14 +220,16 @@ class GroupDetector(nn.Module):
           h0      : (B, N, 64)  raw encoder embeddings
         """
         # Most recent frame for edge geometry (dp, dv, dist)
-        curr_feats = raw_feats[..., -self.feat_dim:]
+        curr_feats  = raw_feats[..., -self.feat_dim:]
+        # full_feats passed to edge_net only when Variant C pairwise temporal is on
+        full_feats  = raw_feats if self.use_pairwise_temporal else None
 
         h0 = self.encoder(raw_feats, mask)
-        W0 = self.edge_net(h0, curr_feats, mask)
+        W0 = self.edge_net(h0, curr_feats, mask, full_feats)
 
         if self.gnn is not None:
             g       = self.gnn(h0, W0, mask)
-            W_final = self.edge_net(g, curr_feats, mask)
+            W_final = self.edge_net(g, curr_feats, mask, full_feats)
         else:
             g       = h0
             W_final = W0
