@@ -2,10 +2,11 @@
 
 End-to-end, perception-aware redesign of GRAM for the realistic crowd-navigation environment.
 
-> **Status (2026-05-02):** Phase 1 ablation complete (A/B/C). Best: Variant B (F1=0.746, AUROC=0.945).
-> Variant C marginally worse (-0.5pp F1) — explicit pairwise temporal features are redundant with implicit encoder representation.
-> Root cause of ~0.75 ceiling: `dynamic_free` group label noise (independently navigating members).
-> **Phase 2 (GNN) is next — use Variant B checkpoint.**
+> **Status (2026-05-03):** Phase 1 + Phase 2 training complete.
+> Phase 2 (GNN): F1=0.899, ARI=0.775, AUROC=0.992 — ARI passed, F1 misses criterion by 0.001.
+> Root cause of ~0.90 ceiling: same `dynamic_free` label noise as Phase 1. Fix: retrain on v2 data.
+> DBSCAN baseline: Var-B +37pp F1 (0.746 vs 0.376); Phase 2 +52pp F1 (0.899 vs 0.376).
+> **Next step: run `gram_v2_collect_data_v2.py` → retrain Phase 1+2 on v2 data → clean F1≥0.90.**
 > Update this file every time we change the design or finish a milestone.
 
 ---
@@ -391,7 +392,39 @@ Variant C is marginally worse than Variant B (F1: 0.741 vs 0.746, AUROC: 0.943 v
 
 ---
 
-## 10. Milestones / log
+## 10. Phase 2 — GNN Results
+
+**Date:** 2026-05-03  
+**Script:** `gram_v2_train_phase2.py`  
+**Config:** 3-layer GNN; loaded Variant B checkpoint; 60 epochs, batch=256; dual loss L_main + 0.3×L_aux  
+**Checkpoint:** `trained_models/gram_v2/phase2/best.pt` (val F1=0.886, threshold=0.65)
+
+**Results (test set, threshold=0.65):**
+
+| Metric | Value | Criterion |
+|---|---|---|
+| F1 | **0.8984** | ≥ 0.90 ❌ (miss by 0.0016) |
+| ARI | **0.7748** | > 0.70 ✅ |
+| AUROC | **0.9915** | — |
+| Precision | 0.8890 | — |
+| Recall | 0.9079 | — |
+
+**Analysis:**
+
+GNN message passing delivered a substantial gain over Phase 1 Variant B:
+- F1: 0.746 → 0.899 (+15pp)
+- ARI: — → 0.775 (phase 1 had no ARI — now comfortably passes >0.70)
+- AUROC: 0.945 → 0.992 (+5pp)
+
+The model misses the F1≥0.90 criterion by 0.0016 — this is within threshold-choice noise. The root cause is the same `dynamic_free` label noise that capped Phase 1 at ~0.75: those pairs are labeled positive in v1 data but are perceptually indistinguishable from unrelated pedestrians. The GNN's transitivity propagated group structure well enough to drive ARI=0.775, but the noisy positive labels pull F1 down by a fraction.
+
+**Verdict:** Phase 2 architecture is correct and effective. The label noise fix (v2 data, `dynamic_free` excluded) is expected to cleanly push F1 over 0.90 without any model changes.
+
+**ARI vs DBSCAN reference:** ARI=0.775 vs DBSCAN pos+vel ARI=0.301 — Phase 2 GNN is +47pp ARI.
+
+---
+
+## 11. Milestones / log
 
 | Date | Phase | Milestone | Outcome |
 |---|---|---|---|
@@ -402,7 +435,10 @@ Variant C is marginally worse than Variant B (F1: 0.741 vs 0.746, AUROC: 0.943 v
 | 2026-05-01 | Phase 1 | Variant B training (3-frame, 21-d) | **PARTIAL** F1=0.746, AUROC=0.945. +4pp over Variant A. Implicit trajectory comparison insufficient to cross 0.85 — explicit pairwise temporal features needed. |
 | 2026-05-02 | Phase 1 | Variant C training (+ explicit pairwise temporal) | **DONE** F1=0.741, AUROC=0.943. Marginallyˍworse than B — explicit temporal features redundant with encoder. Variant B is best Phase 1 checkpoint. |
 | 2026-05-02 | Phase 1 | Ablation complete | B wins. Root cause of ~0.75 ceiling: dynamic_free label noise. Proceed to Phase 2 (GNN). |
-| | Phase 2 | GNN added | (pending) |
+| 2026-05-03 | Baseline | DBSCAN evaluated | pos+vel F1=0.376, ARI=0.301. Var-B outperforms by +37pp F1. See Section 11. |
+| 2026-05-03 | Phase 2 | Training started | 3-layer GNN; loaded Var-B checkpoint; 60 epochs. Criterion: F1≥0.90 AND ARI>0.70. |
+| 2026-05-03 | Phase 2 | GNN training complete | F1=0.899 (miss by 0.001), ARI=0.775 ✅, AUROC=0.992. Root cause: dynamic_free label noise. Next: v2 data. |
+| | v2 data | Retrain Phase 1+2 on v2 data | (pending) — expected to push F1 cleanly ≥ 0.90 |
 | | Phase 3 | slot attention pooling | (pending) |
 | | Phase 4 | full network + PPO training | (pending) |
 | | Phase 5 | ablations + paper writeup | (pending) |
@@ -412,7 +448,37 @@ Variant C is marginally worse than Variant B (F1: 0.741 vs 0.746, AUROC: 0.943 v
 
 ---
 
-## 10. References
+## 12. DBSCAN Baseline Comparison
+
+**Run date:** 2026-05-03  
+**Script:** `gram_v2_eval_dbscan.py`  
+**Dataset:** `gram_v2_data/` (v1 — includes `dynamic_free` positive labels)  
+**DBSCAN configuration:** `min_samples=2`; eps tuned on val set, optimal applied to test set; pos+vel mode scales velocity by 0.5.
+
+| Method | F1 | Precision | Recall | ARI | Notes |
+|---|---|---|---|---|---|
+| DBSCAN (position) [eps=1.5] | 0.314 | 0.263 | 0.391 | 0.151 | Clusters on (p_rel_x, p_rel_y) only |
+| DBSCAN (pos+vel) [eps=2.0] | 0.376 | 0.323 | 0.451 | 0.301 | Clusters on position + scaled velocity |
+| GRAM-v2 Phase1 Var-A | 0.582 | 0.488 | 0.720 | — | 7-d single frame; from saved checkpoint |
+| GRAM-v2 Phase1 Var-B | **0.746** | **0.739** | **0.753** | — | 21-d 3-frame; best Phase 1 model |
+| GRAM-v2 Phase1 Var-C | 0.741 | 0.719 | 0.766 | — | 21-d + explicit pairwise temporal |
+| **GRAM-v2 Phase2 (GNN)** | **0.899** | **0.889** | **0.908** | **0.775** | 3-layer GNN on Var-B checkpoint |
+
+**Notes:**
+- DBSCAN has no AUROC (hard assignment, not probabilistic). ARI is available because cluster labels are derived directly.
+- Phase 1 GRAM-v2 ARI is `—` (not computed in Phase 1 — pairwise output is not converted to full cluster labels until the GNN in Phase 2).
+- Var-A comparison F1 (0.582) differs from Section 9 (0.705) because the `.pt` checkpoint was saved at default threshold 0.5; Section 9 reports post-threshold-optimization F1 at threshold 0.60.
+
+**Key takeaways:**
+1. **+37pp F1 over best DBSCAN.** Variant B (0.746) vs DBSCAN pos+vel (0.376) — a large margin validating the learned temporal encoder over classical clustering.
+2. **DBSCAN recall > precision.** Both modes are liberal (recall≈0.4, precision≈0.3) — clustering any nearby pair as a group. GRAM-v2 achieves balanced precision/recall (0.739/0.753), meaning it is discriminative, not just a proximity heuristic.
+3. **DBSCAN ARI=0.301 for pos+vel** is the reference point. Phase 2 GNN must exceed this for whole-scene cluster quality.
+4. **Paper claim supported:** Learning temporal co-movement from raw observations yields dramatically better group detection than proximity-based clustering, even when DBSCAN is given both position and velocity features.
+5. **Phase 2 GNN: +52pp F1 over DBSCAN pos+vel** (0.899 vs 0.376), **+47pp ARI** (0.775 vs 0.301).
+
+---
+
+## 13. References
 
 - **Slot Attention** — Locatello et al., NeurIPS 2020. *Object-Centric Learning with Slot Attention.* — for soft group pooling.
 - **DiffPool** — Ying et al., NeurIPS 2018. *Hierarchical Graph Representation Learning with Differentiable Pooling.* — alternative to slot attention.

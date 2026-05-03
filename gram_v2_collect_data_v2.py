@@ -69,8 +69,8 @@ def build_pair_labels(env) -> np.ndarray:
     """
     # Map group_id → group_type from env.groups
     gid_to_type = {}
-    if hasattr(env, 'groups') and env.groups:
-        for group in env.groups:
+    if hasattr(env, 'grp') and env.grp:
+        for group in env.grp:
             gid_to_type[group.id] = group.group_type
 
     labels = np.zeros((MAX_HUMANS, MAX_HUMANS), dtype=np.float32)
