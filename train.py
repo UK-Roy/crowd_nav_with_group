@@ -106,6 +106,14 @@ def main():
 							  algo_args.human_node_rnn_size,
 							  algo_args.human_human_edge_rnn_size)
 
+	# For GRAM-v2: load frozen Phase 2 + Phase 3 backbones before PPO starts
+	if config.robot.policy == 'gram_v2':
+		actor_critic.base.load_frozen_backbones(
+			detector_path=config.gram_v2.phase2_checkpoint,
+			slot_path=config.gram_v2.phase3_checkpoint,
+			device=device,
+		)
+
 	# continue training from an existing model if resume = True
 	if algo_args.resume:
 		load_path = algo_args.load_path

@@ -2,11 +2,10 @@
 
 End-to-end, perception-aware redesign of GRAM for the realistic crowd-navigation environment.
 
-> **Status (2026-05-03):** Phase 1 + Phase 2 training complete.
-> Phase 2 (GNN): F1=0.899, ARI=0.775, AUROC=0.992 — ARI passed, F1 misses criterion by 0.001.
-> Root cause of ~0.90 ceiling: same `dynamic_free` label noise as Phase 1. Fix: retrain on v2 data.
-> DBSCAN baseline: Var-B +37pp F1 (0.746 vs 0.376); Phase 2 +52pp F1 (0.899 vs 0.376).
-> **Next step: run `gram_v2_collect_data_v2.py` → retrain Phase 1+2 on v2 data → clean F1≥0.90.**
+> **Status (2026-05-04):** Phase 1 + Phase 2 + Phase 3 training complete.
+> Phase 3 (Slot Attention): Test purity=0.954 ✅ (criterion >0.85). Best val purity=0.950 at epoch 39/50.
+> Checkpoint: `trained_models/gram_v2/phase3/best.pt`.
+> **Next step: Phase 4 — cross-attention + GRU + actor/critic + PPO training.**
 > Update this file every time we change the design or finish a milestone.
 
 ---
@@ -439,7 +438,7 @@ The model misses the F1≥0.90 criterion by 0.0016 — this is within threshold-
 | 2026-05-03 | Phase 2 | Training started | 3-layer GNN; loaded Var-B checkpoint; 60 epochs. Criterion: F1≥0.90 AND ARI>0.70. |
 | 2026-05-03 | Phase 2 | GNN training complete | F1=0.899 (miss by 0.001), ARI=0.775 ✅, AUROC=0.992. Root cause: dynamic_free label noise. Next: v2 data. |
 | | v2 data | Retrain Phase 1+2 on v2 data | (pending) — expected to push F1 cleanly ≥ 0.90 |
-| | Phase 3 | slot attention pooling | (pending) |
+| 2026-05-04 | Phase 3 | Slot attention training (50 epochs) | Test purity=0.954 ✅ (>0.85). Best val=0.950 at epoch 39. Phase 2 embeddings well-structured — fast convergence. |
 | | Phase 4 | full network + PPO training | (pending) |
 | | Phase 5 | ablations + paper writeup | (pending) |
 

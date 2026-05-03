@@ -7,6 +7,7 @@ from .srnn_model import SRNN
 from .selfAttn_srnn_temp_node_groupAttn import selfAttn_merge_SRNN_GrpAttn
 from .selfAttn_srnn_temp_node import selfAttn_merge_SRNN
 from .stgan_model import STGAN
+from .gram_v2_network import GRAMV2Network
 
 class Flatten(nn.Module):
     def forward(self, x):
@@ -28,6 +29,8 @@ class Policy(nn.Module):
             base = selfAttn_merge_SRNN_GrpAttn
         elif base == 'garn':
             base = STGAN
+        elif base == 'gram_v2':
+            base = GRAMV2Network
         else:
             raise NotImplementedError
 

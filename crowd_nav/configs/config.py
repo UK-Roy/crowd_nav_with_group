@@ -51,6 +51,14 @@ class Config(object):
     garn.c2 = 1.0                      # Eq. 8: cooperative passing weight
     garn.d_t1 = 3.0                    # Eq. 7: consideration range for groups (meters)
 
+    # config for GRAM-v2 Phase 4 (end-to-end perception-aware navigation)
+    # Activate by setting: robot.policy='gram_v2', sim.predict_method='none',
+    # --env-name CrowdSimVarNum-v0, --human_node_rnn_size 256,
+    # --human_human_edge_rnn_size 14
+    gram_v2 = BaseConfig()
+    gram_v2.phase2_checkpoint = 'trained_models/gram_v2/phase2_v1/best.pt'
+    gram_v2.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
+
     # config for Groups
     group = BaseConfig()
     group.num_groups = 3        # 3 groups × 3-4 members = 9-12 group humans; rest are individuals

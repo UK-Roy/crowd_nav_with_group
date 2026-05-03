@@ -55,6 +55,7 @@ class CrowdSimVarNum(CrowdSim):
         # only consider all temporal edges (human_num+1) and spatial edges pointing to robot (human_num)
         d['temporal_edges'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(1, 2,), dtype=np.float32)
         d['spatial_edges'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.max_human_num, 2), dtype=np.float32)
+        d['velocity_edges'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.max_human_num, 2), dtype=np.float32)
         # number of humans detected at each timestep
         d['detected_human_num'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(1, ), dtype=np.float32)
         # whether each human is visible to robot (ordered by human ID, should not be sorted)
