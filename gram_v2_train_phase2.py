@@ -210,9 +210,17 @@ def main():
                               num_workers=2)
 
     # ── Model ────────────────────────────────────────────────────────────────
-    model = GroupDetector(n_gnn_layers=args.gnn_layers).to(device)
+    # Read use_pairwise_temporal from Phase 1 checkpoint before building model
+    use_pt = False
+    if os.path.exists(args.phase1):
+        _p1 = torch.load(args.phase1, map_location='cpu')
+        use_pt = _p1.get('vcfg', {}).get('use_pairwise_temporal', False)
+        del _p1
+
+    model = GroupDetector(n_gnn_layers=args.gnn_layers,
+                          use_pairwise_temporal=use_pt).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"GroupDetectorV2  params: {n_params:,}")
+    print(f"GroupDetectorV2  params: {n_params:,}  use_pairwise_temporal={use_pt}")
 
     # Load Phase 1 weights into encoder + edge_net
     if os.path.exists(args.phase1):
@@ -251,13 +259,14 @@ def main():
         if val_metrics['f1'] > best_val_f1:
             best_val_f1 = val_metrics['f1']
             torch.save({'epoch': epoch, 'model_state': model.state_dict(),
-                        'val_metrics': val_metrics, 'pos_weight': pw},
+                        'val_metrics': val_metrics, 'pos_weight': pw,
+                        'use_pairwise_temporal': use_pt},
                        os.path.join(args.save, 'best.pt'))
             print('  ← best', end='')
         print()
 
     torch.save({'epoch': args.epochs, 'model_state': model.state_dict(),
-                'val_metrics': val_metrics},
+                'val_metrics': val_metrics, 'use_pairwise_temporal': use_pt},
                os.path.join(args.save, 'last.pt'))
 
     # ── Final test ────────────────────────────────────────────────────────────

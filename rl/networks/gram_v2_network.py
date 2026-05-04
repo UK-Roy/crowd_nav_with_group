@@ -80,9 +80,10 @@ class GRAMV2Network(nn.Module):
         self.nminibatch = args.num_mini_batch
         self.output_size = OUTPUT_SIZE
 
-        # ── Frozen perception backbone ─────────────────────────────────────────
+        # ── Frozen perception backbone (rebuilt in load_frozen_backbones) ────────
         self.detector  = GroupDetector(input_dim=INPUT_DIM, n_gnn_layers=3)
         self.slot_attn = SlotAttention(embed_dim=EMBED_DIM, K=K_SLOTS)
+        self._detector_use_pt = False  # updated by load_frozen_backbones
 
         # ── Robot-query MLP ───────────────────────────────────────────────────
         self.robot_query_mlp = nn.Sequential(
@@ -118,6 +119,11 @@ class GRAMV2Network(nn.Module):
                                device: torch.device):
         """Load Phase 2 and Phase 3 checkpoints and freeze their parameters."""
         ckpt2 = torch.load(detector_path, map_location=device)
+        use_pt = ckpt2.get('use_pairwise_temporal', False)
+        if use_pt != self._detector_use_pt:
+            self.detector = GroupDetector(input_dim=INPUT_DIM, n_gnn_layers=3,
+                                          use_pairwise_temporal=use_pt).to(device)
+            self._detector_use_pt = use_pt
         self.detector.load_state_dict(ckpt2['model_state'])
         for p in self.detector.parameters():
             p.requires_grad_(False)
