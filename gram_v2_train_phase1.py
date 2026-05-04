@@ -194,9 +194,12 @@ def main():
                         help='Feature ablation variant (A=single-frame, B=3-frame, C=+pairwise temporal)')
     parser.add_argument('--data',    default='gram_v2_data')
     parser.add_argument('--save',    default='trained_models/gram_v2/phase1')
-    parser.add_argument('--epochs',  type=int,   default=60)
-    parser.add_argument('--batch',   type=int,   default=256)
-    parser.add_argument('--lr',      type=float, default=1e-3)
+    parser.add_argument('--epochs',        type=int,   default=60)
+    parser.add_argument('--batch',         type=int,   default=256)
+    parser.add_argument('--lr',            type=float, default=1e-3)
+    parser.add_argument('--pos-weight-cap',type=float, default=None,
+                        help='Cap pos_weight at this value (default: use computed ratio). '
+                             'Try sqrt(imbalance) e.g. 2.3 if recall >> precision.')
     parser.add_argument('--workers', type=int,   default=4)
     parser.add_argument('--no-cuda', action='store_true')
     args = parser.parse_args()
@@ -217,6 +220,8 @@ def main():
     test_ds  = GroupPairDataset(os.path.join(args.data, 'test.npz'))
 
     pw = train_ds.pos_weight()
+    if args.pos_weight_cap is not None and pw > args.pos_weight_cap:
+        pw = args.pos_weight_cap
     print(f"Positive-pair rate: {1/(pw+1):.3f}  →  pos_weight = {pw:.1f}")
     print(f"Train: {len(train_ds):,}   Val: {len(val_ds):,}   Test: {len(test_ds):,} samples")
     print(f"Device: {device}\n")
