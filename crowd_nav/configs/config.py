@@ -42,7 +42,7 @@ class Config(object):
     reward.grp_collision_penalty = -21
 
     # whether to use GARN's group-related reward (R_grp) instead of default group reward
-    reward.use_garn_reward = True
+    reward.use_garn_reward = False
 
     # config for GARN reward function (Lu et al. RA-L 2025)
     garn = BaseConfig()
@@ -247,7 +247,7 @@ class Config(object):
     # 'truth': ground truth future traj (with info in robot's fov)
     # 'inferred': inferred future traj from GST network
     # 'none': no prediction
-    sim.predict_method = 'inferred'
+    sim.predict_method = 'none'
     # render the simulation during training or not
     sim.render = False
 
@@ -300,8 +300,8 @@ class Config(object):
     robot.visible = False
     # For baseline: srnn; another method: selfAttn_merge_srnn
     # our method robot.policy = 'selfAttn_merge_srnn'
-    # GARN baseline: 'garn'
-    robot.policy = 'garn'
+    # GARN baseline: 'garn'; GRAM-v2: 'gram_v2'
+    robot.policy = 'gram_v2'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"
