@@ -15,7 +15,7 @@ class Config(object):
 
     # general configs for OpenAI gym env
     env = BaseConfig()
-    env.time_limit = 56.25   # 56.25 / 0.25 = 225 steps
+    env.time_limit = 49.25   # 49.25 / 0.25 = 197 steps
     env.time_step = 0.25
     env.val_size = 100
     env.test_size = 100
@@ -37,9 +37,9 @@ class Config(object):
     
     reward.group_safety_buffer = 0.1
     reward.discomfort_group_dist = 0.07 #0.05
-    reward.discomfort_grp_penalty_factor = 12
-    
-    reward.grp_collision_penalty = -21
+    reward.discomfort_grp_penalty_factor = 0   # Stage 1: no groups; restore in Stage 2+
+
+    reward.grp_collision_penalty = 0   # Stage 1: no groups; restore in Stage 3+
 
     # whether to use GARN's group-related reward (R_grp) instead of default group reward
     reward.use_garn_reward = False
@@ -61,7 +61,7 @@ class Config(object):
 
     # config for Groups
     group = BaseConfig()
-    group.num_groups = 2        # training: 2 groups (simpler); bump to 3 after convergence
+    group.num_groups = 2        # Stage 2+: 2 static groups; bump to 3 in Stage 4+
 
     group.min_size = 3
     group.max_size = 4
@@ -77,13 +77,13 @@ class Config(object):
     # 'static_f'    — stationary F-formation (Kendon 1990)
     # 'dynamic_lf'  — moving, followers track leader (Helbing & Molnar 1995)
     # 'dynamic_free'— moving, each member navigates independently (ORCA)
-    group.types = ['static_f']  # training: simplest type only; add dynamic types after convergence
+    group.types = ['static_f']  # Stage 2–3: static only; add dynamic types in Stage 4
 
     group.avoid_action = False
 
     # How many of the groups are placed along the robot→goal path to guarantee
     # the robot encounters them. Remaining groups are placed randomly.
-    group.num_on_path = 1       # training: 1 group on path; bump to 2 after convergence
+    group.num_on_path = 0       # Stage 2: off-path; bump to 1 in Stage 3, 2 in Stage 4
 
     # config for realistic pedestrian / group modeling (shared benchmark env)
     # Every sub-flag gates a discrete feature; defaults are *off* so trained
@@ -239,7 +239,7 @@ class Config(object):
     # True/False = individuals only. False/True = groups only (forces every
     # human into a group; clip human_num to total group capacity).
     sim.has_individuals = True
-    sim.has_groups = True
+    sim.has_groups = False      # Stage 1: individuals only; set True from Stage 2 onward
     # actual human num in each timestep, in [human_num-human_num_range, human_num+human_num_range]
     sim.human_num_range = 0
     sim.predict_steps = 5
