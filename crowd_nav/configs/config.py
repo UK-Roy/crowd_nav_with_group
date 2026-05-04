@@ -42,7 +42,7 @@ class Config(object):
     reward.grp_collision_penalty = -21
 
     # whether to use GARN's group-related reward (R_grp) instead of default group reward
-    reward.use_garn_reward = False
+    reward.use_garn_reward = True
 
     # config for GARN reward function (Lu et al. RA-L 2025)
     garn = BaseConfig()
@@ -56,7 +56,7 @@ class Config(object):
     # --env-name CrowdSimVarNum-v0, --human_node_rnn_size 256,
     # --human_human_edge_rnn_size 14
     gram_v2 = BaseConfig()
-    gram_v2.phase2_checkpoint = 'trained_models/gram_v2/phase2_v1/best.pt'
+    gram_v2.phase2_checkpoint = 'trained_models/gram_v2/phase2_v2/best.pt'
     gram_v2.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
 
     # config for Groups
