@@ -118,12 +118,12 @@ class GRAMV2Network(nn.Module):
                                device: torch.device):
         """Load Phase 2 and Phase 3 checkpoints and freeze their parameters."""
         ckpt2 = torch.load(detector_path, map_location=device)
-        self.detector.load_state_dict(ckpt2['model'])
+        self.detector.load_state_dict(ckpt2['model_state'])
         for p in self.detector.parameters():
             p.requires_grad_(False)
 
         ckpt3 = torch.load(slot_path, map_location=device)
-        self.slot_attn.load_state_dict(ckpt3['slot_attn'])
+        self.slot_attn.load_state_dict(ckpt3['model_state'])
         for p in self.slot_attn.parameters():
             p.requires_grad_(False)
 
