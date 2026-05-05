@@ -164,7 +164,9 @@ def main():
 						 config=env_config, ax=ax, test_case=test_args.test_case, pretext_wrapper=config.env.use_wrapper)
 
 	if config.robot.policy not in ['orca', 'social_force', 'zone_based', 'f_formation']:
-		# print(f"The robot policy is {config.robot.policy}, creating eval_recurrent_hidden_states")
+		# Inject GRAM-v2 config flags so the loaded network is configured correctly
+		if config.robot.policy == 'gram_v2':
+			algo_args.gram_v2_use_slots = config.gram_v2.use_slots
 		# load the policy weights
 		actor_critic = Policy(
 			envs.observation_space.spaces,

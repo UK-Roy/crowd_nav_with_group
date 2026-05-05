@@ -79,6 +79,8 @@ class GRAMV2Network(nn.Module):
         self.nenv       = args.num_processes
         self.nminibatch = args.num_mini_batch
         self.output_size = OUTPUT_SIZE
+        # default True keeps old behaviour; set False in Stage 1-2 to skip slots
+        self.use_slots  = getattr(args, 'gram_v2_use_slots', True)
 
         # Attributes expected by evaluation.py
         self.human_node_rnn_size       = GRU_HIDDEN      # 256
@@ -210,24 +212,24 @@ class GRAMV2Network(nn.Module):
         feat_flat  = feat21_all.reshape(TB, N_actual, INPUT_DIM)
         vmask_flat = vmask_all.reshape( TB, N_actual)
 
-        if not self.detector.training:
-            # frozen mode — no gradients needed
-            with torch.no_grad():
-                _, _, g, _ = self.detector(feat_flat, vmask_flat)
-                slots, _   = self.slot_attn(g, vmask_flat)
+        no_grad = not self.detector.training
+        with torch.no_grad() if no_grad else torch.enable_grad():
+            _, _, g, _ = self.detector(feat_flat, vmask_flat)    # (TB, N, 64)
+            if self.use_slots:
+                slots, _ = self.slot_attn(g, vmask_flat)         # (TB, K, 64)
+
+        # ── Cross-Attention: robot query attends to humans [+ slots] ─────────
+        q = self.robot_query_mlp(robot_all.reshape(TB, ROBOT_RAW)).unsqueeze(1)  # (TB, 1, 64)
+
+        if self.use_slots:
+            kv        = torch.cat([g, slots], dim=1)                               # (TB, N+K, 64)
+            slot_ok   = torch.ones(TB, K_SLOTS, dtype=torch.bool, device=device)
+            key_valid = torch.cat([vmask_flat, slot_ok], dim=1)                    # (TB, N+K)
         else:
-            # trainable mode — gradients flow through backbone
-            _, _, g, _ = self.detector(feat_flat, vmask_flat)   # (TB, N, 64)
-            slots, _   = self.slot_attn(g, vmask_flat)          # (TB, K, 64)
+            kv        = g                                                           # (TB, N, 64)
+            key_valid = vmask_flat                                                  # (TB, N)
 
-        # ── Cross-Attention: robot query attends to humans + slots ────────────
-        q    = self.robot_query_mlp(robot_all.reshape(TB, ROBOT_RAW)).unsqueeze(1)  # (TB, 1, 64)
-        kv   = torch.cat([g, slots], dim=1)                                          # (TB, N+K, 64)
-
-        # Key-padding mask: True = ignore (padding). Humans: ~visible; Slots: always valid
-        slot_valid = torch.ones(TB, K_SLOTS, dtype=torch.bool, device=device)
-        key_valid  = torch.cat([vmask_flat, slot_valid], dim=1)  # (TB, N+K)
-        key_pad    = ~key_valid                                   # True = pad
+        key_pad = ~key_valid                                      # True = ignore
 
         attn_out, _ = self.cross_attn(q, kv, kv, key_padding_mask=key_pad)
         c = attn_out.squeeze(1)           # (TB, 64)

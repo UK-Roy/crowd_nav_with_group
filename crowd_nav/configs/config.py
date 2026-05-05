@@ -61,6 +61,9 @@ class Config(object):
     # False = train backbone end-to-end with navigation policy (Stage 1-2)
     # True  = freeze backbone, only train cross-attn+GRU+heads (Stage 3+)
     gram_v2.freeze_backbone = False
+    # False = skip SlotAttention, cross-attn only over human embeddings (Stage 1-2)
+    # True  = include group slot prototypes in cross-attn kv (Stage 3+)
+    gram_v2.use_slots = False
 
     # config for Groups
     group = BaseConfig()

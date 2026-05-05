@@ -92,6 +92,10 @@ def main():
 
 
 	# create a policy network
+	# Inject GRAM-v2 config flags into algo_args so the network can read them
+	if config.robot.policy == 'gram_v2':
+		algo_args.gram_v2_use_slots = config.gram_v2.use_slots
+
 	actor_critic = Policy(
 		envs.observation_space.spaces, # pass the Dict into policy to parse
 		envs.action_space,
