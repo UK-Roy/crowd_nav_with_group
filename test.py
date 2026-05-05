@@ -145,7 +145,12 @@ def main():
 	print(load_path)
 
 	# create an environment
-	env_name = algo_args.env_name
+	env_name_file = os.path.join(test_args.model_dir, 'env_name.txt')
+	if os.path.exists(env_name_file):
+		with open(env_name_file, 'r') as f:
+			env_name = f.read().strip()
+	else:
+		env_name = algo_args.env_name
 
 	eval_dir = os.path.join(test_args.model_dir,'eval')
 	if not os.path.exists(eval_dir):
