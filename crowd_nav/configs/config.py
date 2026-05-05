@@ -38,14 +38,14 @@ class Config(object):
     reward.group_safety_buffer = 0.1
     # Stage 1–2: 0.07 (nearly touching — groups off-path, penalty factor is 0 anyway)
     # Stage 3+:  0.35 (35 cm early warning, same scale as individual discomfort_dist)
-    reward.discomfort_group_dist = 0.07
+    reward.discomfort_group_dist = 0.35
     # Stage 1–2: 0   (group avoidance off; robot learns individual navigation first)
     # Stage 3+: 10   (same scale as individual discomfort_penalty_factor)
-    reward.discomfort_grp_penalty_factor = 0
+    reward.discomfort_grp_penalty_factor = 10
 
     # Stage 1–2: 0   (group intrusion not penalised during early curriculum)
     # Stage 3+: -5   (softer than collision_penalty=-20; doesn't end episode)
-    reward.grp_collision_penalty = 0
+    reward.grp_collision_penalty = -5
 
     # whether to use GARN's group-related reward (R_grp) instead of default group reward
     reward.use_garn_reward = False
@@ -66,10 +66,10 @@ class Config(object):
     gram_v2.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
     # False = train backbone end-to-end with navigation policy (Stage 1-2)
     # True  = freeze backbone, only train cross-attn+GRU+heads (Stage 3+)
-    gram_v2.freeze_backbone = False
+    gram_v2.freeze_backbone = True
     # False = skip SlotAttention, cross-attn only over human embeddings (Stage 1-2)
     # True  = include group slot prototypes in cross-attn kv (Stage 3+)
-    gram_v2.use_slots = False
+    gram_v2.use_slots = True
 
     # config for Groups
     group = BaseConfig()
@@ -89,13 +89,13 @@ class Config(object):
     # 'static_f'    — stationary F-formation (Kendon 1990)
     # 'dynamic_lf'  — moving, followers track leader (Helbing & Molnar 1995)
     # 'dynamic_free'— moving, each member navigates independently (ORCA)
-    group.types = ['static_f']  # Stage 2–3: static only; add dynamic types in Stage 4
+    group.types = ['static_f', 'dynamic_lf']  # Stage 3: add moving groups; add dynamic_free in Stage 4
 
     group.avoid_action = False
 
     # How many of the groups are placed along the robot→goal path to guarantee
     # the robot encounters them. Remaining groups are placed randomly.
-    group.num_on_path = 0       # Stage 2: off-path; bump to 1 in Stage 3, 2 in Stage 4
+    group.num_on_path = 1       # Stage 3: 1 on-path; bump to 2 in Stage 4
 
     # config for realistic pedestrian / group modeling (shared benchmark env)
     # Every sub-flag gates a discrete feature; defaults are *off* so trained
@@ -244,9 +244,9 @@ class Config(object):
 
     # config for simulation
     sim = BaseConfig()
-    sim.circle_radius = 5
-    sim.arena_size = 5
-    sim.human_num = 10      # Stage 2: medium density; increase to 15→20 across stages
+    sim.circle_radius = 6
+    sim.arena_size = 6
+    sim.human_num = 15      # Stage 3: increase density; increase to 20 in Stage 4
     # Composition toggles. True/True = mixed (default, legacy behaviour).
     # True/False = individuals only. False/True = groups only (forces every
     # human into a group; clip human_num to total group capacity).
