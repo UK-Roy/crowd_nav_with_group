@@ -19,6 +19,7 @@ from rl.networks.storage import RolloutStorage
 from crowd_nav.configs.config import Config
 # from crowd_nav.configs.oldconfig import Config
 from crowd_sim import *
+from crowd_sim.envs.utils.info import Collision, ReachGoal, Timeout, Danger, GroupIntrusion
 
 
 def main():
@@ -157,6 +158,14 @@ def main():
 
 	episode_rewards = deque(maxlen=100)
 
+	# --- diagnostic trackers (100-episode window) ---
+	_DIAG_N = 100
+	_diag_window   = deque(maxlen=_DIAG_N)  # (outcome_name, ep_len, ep_reward)
+	_diag_new_eps  = 0    # episodes added since last print
+	_diag_discomfort = 0  # steps robot was in danger zone
+	_diag_steps    = 0    # total non-terminal env steps (denominator for discomfort %)
+	_diag_sr_hist  = []   # SR per printed window (for trend arrow)
+
 	start = time.time()
 	num_updates = int(
 		algo_args.num_env_steps) // algo_args.num_steps // algo_args.num_processes
@@ -198,9 +207,18 @@ def main():
 			obs, reward, done, infos = envs.step(action)
 
 
-			for info in infos:
-				if 'episode' in info.keys():
-					episode_rewards.append(info['episode']['r'])
+			for i, (info, done_) in enumerate(zip(infos, done)):
+				ep_info_obj = info.get('info', None)
+				if done_:
+					if 'episode' in info:
+						episode_rewards.append(info['episode']['r'])
+						outcome = type(ep_info_obj).__name__ if ep_info_obj is not None else 'Unknown'
+						_diag_window.append((outcome, info['episode']['l'], info['episode']['r']))
+						_diag_new_eps += 1
+				else:
+					_diag_steps += 1
+					if isinstance(ep_info_obj, Danger):
+						_diag_discomfort += 1
 
 			# If done then clean the history of observations.
 			masks = torch.FloatTensor(
@@ -229,6 +247,51 @@ def main():
 		value_loss, action_loss, dist_entropy = agent.update(rollouts)
 
 		rollouts.after_update()
+
+		# --- 100-episode diagnostic summary ---
+		if _diag_new_eps >= _DIAG_N and len(_diag_window) >= _DIAG_N:
+			recent   = list(_diag_window)
+			outcomes = [o for o, _, _ in recent]
+			n_suc = outcomes.count('ReachGoal')
+			n_col = outcomes.count('Collision')
+			n_to  = _DIAG_N - n_suc - n_col
+
+			sr = n_suc / _DIAG_N
+			cr = n_col / _DIAG_N
+			tr = n_to  / _DIAG_N
+
+			col_lens = [l for o, l, _ in recent if o == 'Collision']
+			suc_lens = [l for o, l, _ in recent if o == 'ReachGoal']
+			to_rews  = [r for o, _, r in recent if o not in ('ReachGoal', 'Collision')]
+
+			discomfort_pct = 100.0 * _diag_discomfort / max(_diag_steps, 1)
+
+			_diag_sr_hist.append(sr)
+			if len(_diag_sr_hist) >= 2:
+				delta = _diag_sr_hist[-1] - _diag_sr_hist[-2]
+				trend = ('UP' if delta > 0.01 else 'DOWN' if delta < -0.01 else 'FLAT') + f' ({delta:+.2f})'
+			else:
+				trend = 'first window'
+
+			print(f"\n{'='*62}")
+			print(f"[DIAG] Last {_DIAG_N} eps | update={j} | SR={sr:.0%}  CR={cr:.0%}  TR={tr:.0%} | trend={trend}")
+			if n_col > 0:
+				avg_col = np.mean(col_lens)
+				why = 'aggressive / panics early' if avg_col < 80 else 'fails in dense crowd near goal'
+				print(f"  Collision  : avg step {avg_col:.0f}/197  --> {why}")
+			if n_suc > 0:
+				print(f"  Success    : avg {np.mean(suc_lens):.0f} steps to goal")
+			if to_rews:
+				avg_tr = np.mean(to_rews)
+				why = 'barely moving toward goal' if avg_tr < -8 else 'reaches near goal but times out'
+				print(f"  Timeout    : avg reward {avg_tr:.1f}  --> {why}")
+			dc_note = '  <-- HIGH: robot stuck/oscillating between humans' if discomfort_pct > 25 else ''
+			print(f"  Discomfort : {discomfort_pct:.1f}% of steps in danger zone{dc_note}")
+			print(f"{'='*62}\n")
+
+			_diag_new_eps    = 0
+			_diag_discomfort = 0
+			_diag_steps      = 0
 
 		# save the model for every interval-th episode or for the last epoch
 		if (j % algo_args.save_interval == 0

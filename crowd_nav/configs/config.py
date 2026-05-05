@@ -36,10 +36,16 @@ class Config(object):
     reward.gamma = 0.99
     
     reward.group_safety_buffer = 0.1
-    reward.discomfort_group_dist = 0.07 #0.05
-    reward.discomfort_grp_penalty_factor = 0   # Stage 1: no groups; restore in Stage 2+
+    # Stage 1–2: 0.07 (nearly touching — groups off-path, penalty factor is 0 anyway)
+    # Stage 3+:  0.35 (35 cm early warning, same scale as individual discomfort_dist)
+    reward.discomfort_group_dist = 0.07
+    # Stage 1–2: 0   (group avoidance off; robot learns individual navigation first)
+    # Stage 3+: 10   (same scale as individual discomfort_penalty_factor)
+    reward.discomfort_grp_penalty_factor = 0
 
-    reward.grp_collision_penalty = 0   # Stage 1: no groups; restore in Stage 3+
+    # Stage 1–2: 0   (group intrusion not penalised during early curriculum)
+    # Stage 3+: -5   (softer than collision_penalty=-20; doesn't end episode)
+    reward.grp_collision_penalty = 0
 
     # whether to use GARN's group-related reward (R_grp) instead of default group reward
     reward.use_garn_reward = False
