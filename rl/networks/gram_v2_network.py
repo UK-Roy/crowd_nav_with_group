@@ -35,6 +35,8 @@ EMBED_DIM   = 64
 K_SLOTS     = 3
 ROBOT_RAW   = 9    # temporal_edges(2) + robot_node(7)
 OUTPUT_SIZE = 256
+GEO_DIM     = 7    # centroid(2)+group_vel(2)+spread(1)+approach_rate(1)+cohesion(1)
+SPATIAL_DIM = 5    # range(1)+sin_bearing(1)+cos_bearing(1)+TCPA(1)+DCPA(1)
 
 
 def _reshapeT(tensor: torch.Tensor, seq_length: int, nenv: int) -> torch.Tensor:
@@ -92,7 +94,14 @@ class GRAMV2Network(nn.Module):
         self._detector_use_pt = False  # updated by load_frozen_backbones
 
         # Always-valid null token — prevents all-keys-masked NaN in cross-attn
-        self.null_embed = nn.Parameter(torch.zeros(EMBED_DIM))
+        self.null_embed    = nn.Parameter(torch.zeros(EMBED_DIM))
+        # Projects 7-d geometric group summary → slot embedding space (Stage 3+)
+        self.slot_geo_proj = nn.Linear(GEO_DIM, EMBED_DIM)
+
+        # Robot-centric spatial encoder: range, bearing, TCPA, DCPA → 64-d
+        self.spatial_encoder = nn.Sequential(
+            nn.Linear(SPATIAL_DIM, EMBED_DIM), nn.ReLU(),
+        )
 
         # ── Robot-query MLP ───────────────────────────────────────────────────
         self.robot_query_mlp = nn.Sequential(
@@ -217,9 +226,49 @@ class GRAMV2Network(nn.Module):
 
         no_grad = not self.detector.training
         with torch.no_grad() if no_grad else torch.enable_grad():
-            _, _, g, _ = self.detector(feat_flat, vmask_flat)    # (TB, N, 64)
+            W_final, _, g, _ = self.detector(feat_flat, vmask_flat)  # (TB,N,N), (TB,N,64)
             if self.use_slots:
-                slots, _ = self.slot_attn(g, vmask_flat)         # (TB, K, 64)
+                slots, alpha = self.slot_attn(g, vmask_flat)         # (TB,K,64), (TB,K,N)
+
+        # ── Robot-centric spatial encoding (range, bearing, TCPA, DCPA) ────────
+        p_cur = feat_flat[..., -FEAT_DIM:-FEAT_DIM+2]          # (TB, N, 2) rel pos
+        v_cur = feat_flat[..., -FEAT_DIM+2:-FEAT_DIM+4]        # (TB, N, 2) rel vel
+        r     = p_cur.norm(dim=-1, keepdim=True).clamp(min=1e-6)     # range
+        sin_b = p_cur[..., 1:2] / r                                   # bearing sin
+        cos_b = p_cur[..., 0:1] / r                                   # bearing cos
+        v_sq  = (v_cur ** 2).sum(-1, keepdim=True).clamp(min=1e-6)
+        pv    = (p_cur * v_cur).sum(-1, keepdim=True)
+        tcpa  = (-pv / v_sq).clamp(0, 10)                             # seconds to CPA
+        dcpa  = ((r ** 2 * v_sq - pv ** 2).clamp(min=0).sqrt() / v_sq.sqrt())  # dist at CPA
+        spatial_enc = self.spatial_encoder(
+            torch.cat([r, sin_b, cos_b, tcpa, dcpa], dim=-1)
+        ) * vmask_flat.unsqueeze(-1).float()                           # (TB, N, 64)
+        g = g + spatial_enc
+
+        # ── Geometric group summaries augmenting slot embeddings ──────────────
+        if self.use_slots:
+            p = feat_flat[..., -FEAT_DIM:-FEAT_DIM+2]               # (TB, N, 2) relative pos
+            v = feat_flat[..., -FEAT_DIM+2:-FEAT_DIM+4]             # (TB, N, 2) relative vel
+
+            alpha_n = alpha / (alpha.sum(-1, keepdim=True) + 1e-8)  # (TB, K, N) normalised
+
+            centroid  = torch.bmm(alpha_n, p)                        # (TB, K, 2)
+            group_vel = torch.bmm(alpha_n, v)                        # (TB, K, 2)
+
+            # Spread: weighted RMS distance from centroid
+            diff_sq = ((p.unsqueeze(1) - centroid.unsqueeze(2)) ** 2).sum(-1)  # (TB,K,N)
+            spread  = (alpha_n * diff_sq).sum(-1, keepdim=True).sqrt()         # (TB,K,1)
+
+            # Approach rate: closing speed of group centroid toward robot (origin)
+            c_norm        = centroid.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+            approach_rate = -(centroid * group_vel).sum(-1, keepdim=True) / c_norm  # (TB,K,1)
+
+            # Cohesion: expected pairwise groupness within each slot
+            coh_num  = (torch.bmm(alpha, W_final) * alpha).sum(-1)  # (TB, K)
+            cohesion = (coh_num / (alpha * alpha).sum(-1).clamp(min=1e-8)).unsqueeze(-1)  # (TB,K,1)
+
+            geo   = torch.cat([centroid, group_vel, spread, approach_rate, cohesion], dim=-1)  # (TB,K,7)
+            slots = slots + self.slot_geo_proj(geo)
 
         # ── Cross-Attention: robot query attends to humans [+ slots] ─────────
         q = self.robot_query_mlp(robot_all.reshape(TB, ROBOT_RAW)).unsqueeze(1)  # (TB, 1, 64)

@@ -173,7 +173,10 @@ def main():
 			envs.action_space,
 			base_kwargs=algo_args,
 			base=config.robot.policy)
-		actor_critic.load_state_dict(torch.load(load_path, map_location=device))
+		missing, unexpected = actor_critic.load_state_dict(
+			torch.load(load_path, map_location=device), strict=False)
+		if missing:
+			print(f"[test] New params not in checkpoint (random init): {missing}")
 		actor_critic.base.nenv = 1
 
 		# allow the usage of multiple GPUs to increase the number of examples processed simultaneously

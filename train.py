@@ -122,8 +122,13 @@ def main():
 	# continue training from an existing model if resume = True
 	if algo_args.resume:
 		load_path = algo_args.load_path
-		actor_critic.load_state_dict(torch.load(load_path))
-		print("Loaded the following checkpoint:", load_path)
+		missing, unexpected = actor_critic.load_state_dict(
+			torch.load(load_path, map_location=device), strict=False)
+		if missing:
+			print(f"[resume] New parameters (random init): {missing}")
+		if unexpected:
+			print(f"[resume] Ignored checkpoint keys: {unexpected}")
+		print("Loaded checkpoint:", load_path)
 
 
 	# allow the usage of multiple GPUs to increase the number of examples processed simultaneously
