@@ -155,10 +155,12 @@ class GRAMV2Network(nn.Module):
         masks_seq      = _reshapeT(masks, seq_length, nenv)                     # (T,B,1)
 
         # ── Unpack recurrent state ────────────────────────────────────────────
-        h_init    = rnn_hxs['human_node_rnn'][:, 0, :]          # (B, 256)
-        frame_buf = rnn_hxs['human_human_edge_rnn'][:, :MAX_HUMANS, :]  # (B, N, 14)
-        prev2     = frame_buf[:, :, :FEAT_DIM]                   # (B, N, 7)  frame t-2
-        prev1     = frame_buf[:, :, FEAT_DIM:]                   # (B, N, 7)  frame t-1
+        # N_actual is derived from observations so the network works with any human_num
+        N_actual  = spatial_edges.shape[2]
+        h_init    = rnn_hxs['human_node_rnn'][:, 0, :]              # (B, 256)
+        frame_buf = rnn_hxs['human_human_edge_rnn'][:, :N_actual, :]  # (B, N_actual, 14)
+        prev2     = frame_buf[:, :, :FEAT_DIM]                       # (B, N_actual, 7)
+        prev1     = frame_buf[:, :, FEAT_DIM:]                       # (B, N_actual, 7)
 
         # ── Build 21-d features and robot state for each timestep ─────────────
         all_feat21 = []
@@ -193,8 +195,8 @@ class GRAMV2Network(nn.Module):
 
         # ── Batch GroupDetector + SlotAttention over T×B ─────────────────────
         TB = seq_length * nenv
-        feat_flat  = feat21_all.reshape(TB, MAX_HUMANS, INPUT_DIM)
-        vmask_flat = vmask_all.reshape( TB, MAX_HUMANS)
+        feat_flat  = feat21_all.reshape(TB, N_actual, INPUT_DIM)
+        vmask_flat = vmask_all.reshape( TB, N_actual)
 
         self.detector.eval()
         self.slot_attn.eval()
@@ -236,10 +238,11 @@ class GRAMV2Network(nn.Module):
         new_node = torch.zeros(nenv, 1, GRU_HIDDEN, device=device, dtype=x.dtype)
         new_node[:, 0, :] = h           # h = last GRU hidden state
 
-        new_edge = torch.zeros(nenv, MAX_HUMANS + 1, FEAT_DIM * 2,
+        buf_rows = rnn_hxs['human_human_edge_rnn'].shape[1]  # = N_actual + 1
+        new_edge = torch.zeros(nenv, buf_rows, FEAT_DIM * 2,
                                device=device, dtype=x.dtype)
-        new_edge[:, :MAX_HUMANS, :FEAT_DIM] = prev2  # frame t-1 → t-2 for next call
-        new_edge[:, :MAX_HUMANS, FEAT_DIM:] = prev1  # frame t   → t-1 for next call
+        new_edge[:, :N_actual, :FEAT_DIM] = prev2  # frame t-1 → t-2 for next call
+        new_edge[:, :N_actual, FEAT_DIM:] = prev1  # frame t   → t-1 for next call
 
         rnn_hxs['human_node_rnn']       = new_node
         rnn_hxs['human_human_edge_rnn'] = new_edge
