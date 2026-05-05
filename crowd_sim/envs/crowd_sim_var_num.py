@@ -923,6 +923,17 @@ class CrowdSimVarNum(CrowdSim):
         # branches and apply R_grp as an additive shaping term at the end.
         use_garn_reward = getattr(self.config.reward, 'use_garn_reward', False)
 
+        # Potential reward — always computed so self.potential stays current.
+        # Terminal branches override reward; non-terminal branches add discomfort on top.
+        if self.robot.kinematics == 'holonomic':
+            pot_factor = 2
+        else:
+            pot_factor = 3
+        potential_cur = np.linalg.norm(
+            np.array([self.robot.px, self.robot.py]) - np.array(self.robot.get_goal_position()))
+        pot_reward = pot_factor * (-abs(potential_cur) - self.potential)
+        self.potential = -abs(potential_cur)
+
         if self.global_time >= self.time_limit - 1:
             reward = 0
             done = True
@@ -931,16 +942,11 @@ class CrowdSimVarNum(CrowdSim):
             reward = self.collision_penalty
             done = True
             episode_info = Collision()
-        # elif grp_collision:
-        #     reward = self.grp_collision_penalty
-        #     done = True
-        #     episode_info = GroupCollision()
         elif grp_collision and not use_garn_reward:
-            # Don't terminate, just penalize
-            reward = self.grp_collision_penalty
-            done = False  # CHANGED: Continue episode
-            episode_info = GroupIntrusion(dmingrp)  # CHANGED: New info type
-            # Track group intrusion for metrics
+            # Don't terminate; penalize intrusion + keep progress signal.
+            reward = pot_reward + self.grp_collision_penalty
+            done = False
+            episode_info = GroupIntrusion(dmingrp)
             if not hasattr(self, 'group_intrusion_count'):
                 self.group_intrusion_count = 0
             self.group_intrusion_count += 1
@@ -948,34 +954,20 @@ class CrowdSimVarNum(CrowdSim):
             reward = self.success_reward
             done = True
             episode_info = ReachGoal()
-
         elif danger_cond_grp and not use_garn_reward:
-            # only penalize agent for getting too close to grp if it's visible
-            # adjust the reward based on FPS
-            # print(dmin)
-            reward = (dmingrp - self.discomfort_group_dist) * self.discomfort_grp_penalty_factor * self.time_step
+            # Group discomfort additive to potential so robot still gets progress signal.
+            discomfort_grp = (dmingrp - self.discomfort_group_dist) * self.discomfort_grp_penalty_factor * self.time_step
+            reward = pot_reward + discomfort_grp
             done = False
             episode_info = Danger(min_danger_dist)
-
         elif danger_cond:
-            # only penalize agent for getting too close if it's visible
-            # adjust the reward based on FPS
-            # print(dmin)
-            reward = (dmin - self.discomfort_dist) * self.discomfort_penalty_factor * self.time_step
+            # Individual discomfort additive to potential.
+            discomfort = (dmin - self.discomfort_dist) * self.discomfort_penalty_factor * self.time_step
+            reward = pot_reward + discomfort
             done = False
             episode_info = Danger(min_danger_dist)
-
         else:
-            # potential reward
-            if self.robot.kinematics == 'holonomic':
-                pot_factor = 2
-            else:
-                pot_factor = 3
-            potential_cur = np.linalg.norm(
-                np.array([self.robot.px, self.robot.py]) - np.array(self.robot.get_goal_position()))
-            reward = pot_factor * (-abs(potential_cur) - self.potential)
-            self.potential = -abs(potential_cur)
-
+            reward = pot_reward
             done = False
             episode_info = Nothing()
 
