@@ -80,6 +80,10 @@ class GRAMV2Network(nn.Module):
         self.nminibatch = args.num_mini_batch
         self.output_size = OUTPUT_SIZE
 
+        # Attributes expected by evaluation.py
+        self.human_node_rnn_size       = GRU_HIDDEN      # 256
+        self.human_human_edge_rnn_size = FEAT_DIM * 2    # 14
+
         # ── Frozen perception backbone (rebuilt in load_frozen_backbones) ────────
         self.detector  = GroupDetector(input_dim=INPUT_DIM, n_gnn_layers=3)
         self.slot_attn = SlotAttention(embed_dim=EMBED_DIM, K=K_SLOTS)
