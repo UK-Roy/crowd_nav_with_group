@@ -58,6 +58,9 @@ class Config(object):
     gram_v2 = BaseConfig()
     gram_v2.phase2_checkpoint = 'trained_models/gram_v2/phase2_v2/best.pt'
     gram_v2.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
+    # False = train backbone end-to-end with navigation policy (Stage 1-2)
+    # True  = freeze backbone, only train cross-attn+GRU+heads (Stage 3+)
+    gram_v2.freeze_backbone = False
 
     # config for Groups
     group = BaseConfig()

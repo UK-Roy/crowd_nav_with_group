@@ -120,8 +120,8 @@ class GRAMV2Network(nn.Module):
         return GRU_HIDDEN
 
     def load_frozen_backbones(self, detector_path: str, slot_path: str,
-                               device: torch.device):
-        """Load Phase 2 and Phase 3 checkpoints and freeze their parameters."""
+                               device: torch.device, freeze: bool = True):
+        """Load Phase 2 and Phase 3 checkpoints.  freeze=False trains them."""
         ckpt2 = torch.load(detector_path, map_location=device)
         use_pt = ckpt2.get('use_pairwise_temporal', False)
         if use_pt != self._detector_use_pt:
@@ -130,15 +130,23 @@ class GRAMV2Network(nn.Module):
             self._detector_use_pt = use_pt
         self.detector.load_state_dict(ckpt2['model_state'])
         for p in self.detector.parameters():
-            p.requires_grad_(False)
+            p.requires_grad_(not freeze)
 
         ckpt3 = torch.load(slot_path, map_location=device)
         self.slot_attn.load_state_dict(ckpt3['model_state'])
         for p in self.slot_attn.parameters():
-            p.requires_grad_(False)
+            p.requires_grad_(not freeze)
 
-        print(f"[GRAM-v2] Loaded GroupDetector from {detector_path}")
-        print(f"[GRAM-v2] Loaded SlotAttention  from {slot_path}")
+        if freeze:
+            self.detector.eval()
+            self.slot_attn.eval()
+        else:
+            self.detector.train()
+            self.slot_attn.train()
+
+        mode = "frozen" if freeze else "trainable"
+        print(f"[GRAM-v2] Loaded GroupDetector ({mode}) from {detector_path}")
+        print(f"[GRAM-v2] Loaded SlotAttention  ({mode}) from {slot_path}")
 
     def forward(self, inputs, rnn_hxs, masks, infer=False):
         if infer:
@@ -202,9 +210,13 @@ class GRAMV2Network(nn.Module):
         feat_flat  = feat21_all.reshape(TB, N_actual, INPUT_DIM)
         vmask_flat = vmask_all.reshape( TB, N_actual)
 
-        self.detector.eval()
-        self.slot_attn.eval()
-        with torch.no_grad():
+        if not self.detector.training:
+            # frozen mode — no gradients needed
+            with torch.no_grad():
+                _, _, g, _ = self.detector(feat_flat, vmask_flat)
+                slots, _   = self.slot_attn(g, vmask_flat)
+        else:
+            # trainable mode — gradients flow through backbone
             _, _, g, _ = self.detector(feat_flat, vmask_flat)   # (TB, N, 64)
             slots, _   = self.slot_attn(g, vmask_flat)          # (TB, K, 64)
 

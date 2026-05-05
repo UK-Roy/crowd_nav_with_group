@@ -112,6 +112,7 @@ def main():
 			detector_path=config.gram_v2.phase2_checkpoint,
 			slot_path=config.gram_v2.phase3_checkpoint,
 			device=device,
+			freeze=config.gram_v2.freeze_backbone,
 		)
 
 	# continue training from an existing model if resume = True
