@@ -1,0 +1,337 @@
+# GRAM-Map: End-to-End Group-Aware Cost Map Navigation
+
+**Target venue:** CoRL 2026
+**Status:** Architecture proposal — not yet implemented
+**Author:** Utshar Roy
+**Date:** 2026-05-06
+
+---
+
+## 1. Problem and Motivation
+
+Social robot navigation in human crowds requires reasoning about three things simultaneously:
+1. **Where humans are now** (geometry)
+2. **Where humans will be** (intent / prediction)
+3. **What humans belong to whom** (group structure — F-formations, leader-follower, walking dyads)
+
+Existing learned approaches (DS-RNN, GRAM, GARN, our own GRAM-v2) compress this into a recurrent policy that maps observations directly to actions through cross-attention. This works but has three failure modes that we have empirically observed:
+
+| Failure mode | Where we saw it | Why it happens |
+|---|---|---|
+| PPO collapses on curriculum advance | GRAM-v2 Stage 3 (15 humans, mixed groups) — SR went 50% → 0% in 200 updates | New env distribution + unfrozen backbone = exploration noise destroys learned features |
+| Opaque failures | All neural baselines on dense F-formations | Cross-attention scalar weights don't reveal *why* the robot chose to plow through a group |
+| No counterfactual reasoning | TAGA experiments — neural policies can't be "patched" with a tangent action without retraining | Action is conditioned on hidden state, not on a queryable spatial belief |
+
+Classical methods (ORCA, social force) do not have these problems but cannot reason about groups as cohesive entities. They treat every human independently, which is exactly why our environment was designed to be hard for them — yet ORCA still wins on GCR purely because tight group spacing (1.0–1.3 m radius) physically forces avoidance.
+
+**The contribution of this paper is a navigation architecture that exposes the robot's spatial belief as a queryable, interpretable, group-aware cost map and plans over it end-to-end.** The cost map is the bridge between perception and planning, and it is the unit on which we train, ablate, and visualize.
+
+---
+
+## 2. Contribution
+
+We propose **GRAM-Map**, an architecture with four novel components:
+
+### C1. Group-aware cost field synthesis (novel)
+We render a 2D bird's-eye-view (BEV) cost map by composing differentiable cost layers from learned group perception. Existing social cost maps treat pedestrians as independent Gaussians; ours reads off a learned group affinity matrix and renders a *group cohesion field* — a smooth high-cost region across the convex hull of group members, with a soft falloff. This is the first cost map that is group-aware by construction, not by post-hoc clustering.
+
+### C2. Time-conditioned future-intent layer (novel)
+The cost map has a temporal axis: at each planning step we render `T` future cost slices, one per look-ahead horizon (e.g., 0.3 s, 0.7 s, 1.0 s, 1.5 s). Each slice propagates each human along their predicted velocity (from the GST predictor or a learned head) and re-renders the cost. The planner attends to all slices, so it can choose paths that are clear *now and in the future*. Existing learned cost maps are static or single-slice; ours is a 3D (H × W × T) tensor.
+
+### C3. Self-supervised cost regularization (novel)
+We add an auxiliary loss: predict future occupancy. Given the current observation, the cost synthesizer must produce a cost map whose high-cost regions match where humans actually are at each future horizon. This loss is free (ground-truth future positions are known in simulation), it does not require manual cost-map labels, and it grounds the cost field in physical reality before any RL signal arrives. PPO instability — the dominant failure mode of GRAM-v2 — is mitigated because the perception-to-cost path is already trained when the policy starts learning.
+
+### C4. Reuse of self-supervised group backbones
+Phase 2 (GroupDetector) and Phase 3 (SlotAttention) from GRAM-v2 are pretrained on group detection (F1=0.77 on detection, purity=0.93 on slot assignments). They feed directly into the cost synthesizer. This means the entire pre-policy pipeline is trained without any RL signal — and we report ablations with frozen vs unfrozen backbones to quantify the value of self-supervised perception.
+
+---
+
+## 3. Architecture
+
+```
+                       Raw observation
+                       (N humans: pos, vel, radius;
+                        robot: pos, vel, goal)
+                              │
+                ┌─────────────┴──────────────┐
+                ▼                            ▼
+    [Phase 2 GroupDetector]       [Robot-centric encoder]
+       (pretrained, frozen)         (range, bearing,
+                │                    TCPA, DCPA)
+       group affinity W (N×N)              │
+       human embeddings g (N×64)           │
+                │                          │
+                ▼                          │
+    [Phase 3 SlotAttention]                │
+       (pretrained, frozen)                │
+                │                          │
+       group slots s (K×64)                │
+       assignments α (K×N)                 │
+                │                          │
+                └─────────────┬────────────┘
+                              ▼
+                ╔═══════════════════════════╗
+                ║  COST MAP SYNTHESIZER     ║      ← novel
+                ╠═══════════════════════════╣
+                ║  L1: Individual layer     ║      Gaussian splat at each
+                ║                           ║      (px,py); softmax-clipped peak
+                ║  L2: Trajectory layer (T) ║      time-conditioned splat along
+                ║                           ║      v·Δt for T horizons
+                ║  L3: Group cohesion layer ║      α-weighted soft hull,
+                ║                           ║      cost peaks inside hull
+                ║  L4: Group repulsion layer║      gradient outward across
+                ║                           ║      hull boundary (1.5–2.0 m
+                ║                           ║      decay)
+                ║  L5: Goal attractor       ║      negative cost gradient
+                ║                           ║      toward goal
+                ║  L6: Boundary cost        ║      arena edges
+                ╚═══════════════╤═══════════╝
+                                ▼
+                  Aggregated BEV cost stack
+                  C ∈ R^{H × W × T}
+                  (robot-centric, e.g. 6 m × 6 m
+                   at 0.1 m resolution → 60×60×T)
+                                │
+                ┌───────────────┴───────────────┐
+                ▼                               ▼
+   ┌────────────────────────┐      ┌─────────────────────────┐
+   │  PLANNING HEAD         │      │  AUXILIARY HEAD         │
+   │  (trained with PPO)    │      │  (occupancy prediction) │
+   │                        │      │                         │
+   │  3D-CNN over (H,W,T)   │      │  Decode each slice to   │
+   │  → flatten → MLP       │      │  predicted occupancy    │
+   │  → action mean + std   │      │  grid; supervise w/     │
+   │  + value head          │      │  ground-truth future    │
+   │                        │      │  positions (BCE loss)   │
+   └───────────┬────────────┘      └────────────┬────────────┘
+               ▼                                ▼
+            Action                       L_aux (training only)
+```
+
+### 3.1 Cost layer formulae
+
+Let `(x, y)` be a grid cell in robot-centric BEV coordinates. For human `i` at position `p_i` with velocity `v_i`:
+
+**L1 — Individual:**
+```
+c_indiv(x, y) = Σ_i  exp(-||(x, y) - p_i||² / (2 σ_i²))
+```
+where `σ_i = r_human + safety_margin`.
+
+**L2 — Trajectory (per horizon t ∈ {0.3, 0.7, 1.0, 1.5} s):**
+```
+c_traj_t(x, y) = Σ_i  exp(-||(x, y) - (p_i + v_i · t)||² / (2 σ_t²))
+```
+`σ_t` grows with `t` to model prediction uncertainty.
+
+**L3 — Group cohesion (per group k):**
+```
+ĉ_k = α_k · {p_i}    # soft member positions weighted by slot assignment
+hull_k = soft_convex_hull(ĉ_k)
+c_group(x, y) = max_k  hull_k(x, y) · γ_k     # γ_k = group cohesion strength
+```
+
+**L4 — Group repulsion** (gradient outside the hull, 1.5–2.0 m falloff) provides early-warning cost so the planner doesn't graze hull boundaries.
+
+**L5 — Goal attractor** is a negative cost field, so the planner's job becomes "minimize total cost while moving toward the goal."
+
+**L6 — Boundary** prevents the planner from learning to wall-hug.
+
+All layers are differentiable. Gradients flow from PPO loss through the planning head, into the cost map, into the perception encoders.
+
+### 3.2 Why a 3D cost map (H × W × T) and not just 2D
+A 2D snapshot cost map cannot express *"this lane is clear now but will be blocked in 1 second."* The temporal axis lets the planner trade off short-term and long-term clearance, which is exactly what humans do when they walk through crowds. The planning CNN's first layer is `Conv3D(in=1, out=32, kernel=(3,3,3))`, so temporal kernels learn motion patterns automatically.
+
+### 3.3 Cost map resolution
+Trade-off: higher resolution = more spatial fidelity but quadratic FLOPs.
+- **Default:** 60 × 60 × 5 at 0.1 m / cell → 6 m × 6 m × 5 horizons = 18 000 cells per timestep.
+- Forward pass through a small 3D-CNN: < 1 ms on a single GPU at batch 16 envs. Negligible vs PPO rollout time.
+
+---
+
+## 4. Implementation Status
+
+**Branch:** `gram-map`
+
+| File | Status | Description |
+|---|---|---|
+| `rl/networks/gram_map_synthesizer.py` | ✅ Done | CostMapSynthesizer, OccupancyHead, CostMapPlanner |
+| `rl/networks/gram_map_network.py` | ✅ Done | GRAMMapNetwork — full policy |
+| `crowd_nav/policy/gram_map.py` | ✅ Done | Policy class |
+| `crowd_nav/policy/policy_factory.py` | ✅ Done | Registered as `gram_map` |
+| `crowd_nav/configs/config.py` | ✅ Done | `gram_map` config section added |
+| `rl/networks/model.py` | ✅ Done | GRAMMapNetwork wired to `gram_map` key |
+| `train.py` | ✅ Done | backbone loading + aux loss injection |
+| `test.py` | ✅ Done | aux loss disabled at eval |
+| `rl/ppo/ppo.py` | ✅ Done | `_aux_loss` hook (3 lines) |
+
+### Run flags (same as GRAM-v2)
+
+```bash
+--env-name CrowdSimVarNum-v0
+--human_node_rnn_size 256
+--human_human_edge_rnn_size 14
+```
+
+### Training commands
+
+Before running, set `robot.policy = 'gram_map'` in `config.py`, then:
+
+**Stage B — Initial PPO (frozen backbone, no aux loss):**
+```bash
+# config.py: gram_map.freeze_backbone=True, gram_map.use_aux_loss=False
+# Environment: human_num=15, circle_radius=6, group.types=['static_f','dynamic_lf'], num_on_path=1
+# Reward: discomfort_group_dist=0.35, discomfort_grp_penalty_factor=10, grp_collision_penalty=-5
+python train.py --env-name CrowdSimVarNum-v0 \
+  --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+  --output_dir trained_models/gram_map/stageB \
+  --lr 7e-4 --use-linear-lr-decay
+```
+
+**Stage C — Fine-tune with aux loss (after SR > 50%):**
+```bash
+# config.py: gram_map.freeze_backbone=False, gram_map.use_aux_loss=True
+python train.py --env-name CrowdSimVarNum-v0 \
+  --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+  --output_dir trained_models/gram_map/stageC \
+  --lr 2e-4 --use-linear-lr-decay \
+  --resume --load_path trained_models/gram_map/stageB/checkpoints/<best>.pt
+```
+
+**Evaluate:**
+```bash
+python test.py --model_dir trained_models/gram_map/stageB --test_model <best>.pt
+```
+
+---
+
+## 5. Training Procedure
+
+We train in three stages. **Each stage has a single, easy-to-debug objective**, which is the lesson learned from GRAM-v2 Stage 3 collapse (multi-change cascade).
+
+### Stage A — Cost map pretraining (no RL)
+- Freeze Phase 2 + Phase 3 backbones
+- Train cost synthesizer + auxiliary occupancy head only
+- Loss: BCE between predicted occupancy slices and ground-truth future positions
+- Data: replay of expert ORCA + random trajectories, ≈ 50k episodes
+- Goal: cost map is grounded in physics before any RL signal
+
+**Advance criterion:** auxiliary occupancy AUROC > 0.92 on held-out scenarios.
+
+### Stage B — Planning head only (PPO with frozen perception+cost)
+- Freeze backbones + cost synthesizer
+- Train planning head with PPO on Stage 3 environment (15 humans, mixed groups)
+- Loss: standard PPO (clipped surrogate + value loss)
+- Goal: validate that a clean cost map alone suffices for navigation
+
+**Advance criterion:** SR > 60% on Stage 3 env (vs ~50% for GRAM-v2 Stage 1).
+
+### Stage C — End-to-end fine-tuning
+- Unfreeze cost synthesizer; backbones can stay frozen or unfrozen (ablation)
+- Joint loss: `L_PPO + λ · L_aux` (λ = 0.1)
+- Auxiliary loss prevents the cost map from drifting into RL-flavored garbage
+- Goal: squeeze final performance and produce the "we are end-to-end" claim
+
+**Advance criterion:** SR > 70%, GCR < ORCA on Social Force humans (the realistic benchmark).
+
+---
+
+## 5. Experiments
+
+### 5.1 Main results table
+Compare on the realistic benchmark (Social Force humans, 20 humans, 3 groups, all five realistic phases on):
+
+| Method | SR ↑ | CR ↓ | TR ↓ | GCR ↓ | Avg Reward ↑ | Avg Steps ↓ |
+|---|---|---|---|---|---|---|
+| ORCA | | | | | | |
+| Social Force | | | | | | |
+| GARN (RA-L 2025) | | | | | | |
+| GRAM (legacy) | | | | | | |
+| GRAM-v2 (Stage 5) | | | | | | |
+| **GRAM-Map (ours)** | | | | | | |
+
+### 5.2 Ablations
+| Variant | What it tests |
+|---|---|
+| GRAM-Map w/o L3+L4 (group layers) | Does group-aware cost matter, or is per-human enough? |
+| GRAM-Map w/o L2 (trajectory layer) | Does future intent matter? |
+| GRAM-Map w/o L_aux | Does self-supervised cost regularization matter? |
+| GRAM-Map w/ random init backbones | Does Phase 2/3 pretraining matter? |
+| GRAM-Map T = 1 (no temporal axis) | Is the 3D cost map worth the FLOPs? |
+
+### 5.3 Generalization
+Train on 3-4 member groups, evaluate on:
+- 5-6 member groups
+- All-static-F environment
+- All-dynamic-LF environment
+- Mixed environment with novel formation (line-of-three not seen in training)
+
+### 5.4 Qualitative — cost map visualizations
+Render the BEV cost map alongside the trajectory for representative scenarios:
+1. F-formation blocking the path (does the model see a single high-cost region, not a cluster of points?)
+2. Two groups walking toward each other (does the trajectory layer create a high-cost overlap zone?)
+3. Sparse crowd, robot has multiple options (does the goal attractor dominate?)
+
+These visualizations are the core "story" of the paper — they show *why* the robot chose what it chose, in a way no recurrent policy can.
+
+### 5.5 Robustness
+- Sensor noise (Gaussian on positions, velocities)
+- Partial observability (FOV-limited robot)
+- Human policy mismatch (train on ORCA, test on Social Force)
+
+---
+
+## 6. Comparison to Related Work
+
+| Work | What it does | Why GRAM-Map is different |
+|---|---|---|
+| Social cost maps (Kollmitz 2015, Kim & Pineau 2016) | Hand-designed Gaussians around pedestrians, classical planner | Hand-designed; not group-aware; not temporal; not learned |
+| MPPI on learned costs (Williams 2017, Wang 2021) | Sampled trajectories on a neural cost field | Cost field is monolithic, not compositional; not group-aware; trained from scratch |
+| SACSoN (Hirose 2023) | Learned occupancy + planning for indoor robots | Static scenes; no group reasoning; designed for offline data |
+| TrajNet++/Y-Net trajectory predictors | Predict future trajectories | Prediction only; doesn't close the loop with planning |
+| GRAM (ours, prior) | Group-aware attention over recurrent policy | Opaque; no spatial reasoning; PPO-only training |
+| GARN (RA-L 2025) | STGAN trajectory predictor + reward shaping | Reward-level group awareness; no spatial cost map |
+| **GRAM-Map (this work)** | **Compositional learned cost map with group layer + time axis + self-supervision** | **Combines all four ideas; first end-to-end social cost map that is group-aware and time-conditioned** |
+
+---
+
+## 7. Risks and Mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Cost map resolution too coarse for tight squeezes | Bilinear sampling at sub-cell resolution for the planner's local neighborhood |
+| Cost synthesizer overfits to ORCA-style humans | Train on Social Force + ORCA + ground-truth + heuristic mixed; auxiliary loss is policy-agnostic |
+| 3D-CNN planner is slow on low-end GPUs | Default config uses 5 horizons × 60×60 grid → < 1 ms / forward pass on a single 3060 |
+| PPO instability returns at Stage C | L_aux acts as a regularizer; if instability, freeze cost synthesizer permanently and report Stage B as the headline result |
+| CoRL reviewers say "MPPI on learned cost is not new" | We pre-empt this in §6 — our novelty is **compositional + group-aware + time-conditioned**, not the cost-map-on-which-to-plan idea itself |
+
+---
+
+## 8. Timeline
+
+| Week | Milestone |
+|---|---|
+| 1 | Cost synthesizer prototype on Phase 2/3 backbone outputs; render cost maps in unit tests |
+| 2 | Stage A pretraining: cost map + occupancy head; AUROC validation |
+| 3 | Stage B: planning head with frozen cost map; first end-to-end nav results |
+| 4 | Stage C: joint fine-tuning + ablations |
+| 5 | Realistic benchmark eval on all baselines; collect cost map visualizations |
+| 6 | Paper draft; figures; experiments rerun for noise robustness |
+| 7 | CoRL submission (deadline ≈ June 2026) |
+
+Total: **~7 weeks of focused work.** Heavy reuse of existing infrastructure (Phase 2/3 weights, environment, evaluation pipeline, GST predictor for trajectory layer) keeps this realistic.
+
+---
+
+## 9. What this work makes possible afterward
+
+- **Real-world transfer:** the cost map is the natural interface to a real lidar / depth sensor. Phase 2/3 can be retrained on real-world group detection data; the planner doesn't change.
+- **Human-readable failure analysis:** every collision can be inspected by replaying the cost map at the moment of failure.
+- **Compositionality:** new cost layers (e.g., comfort zones for elderly, pet zones, terrain) plug in without retraining the planner from scratch — train just that layer.
+- **TAGA bridge:** TAGA is a hand-crafted tangent action; in this framework it becomes a *learned policy on a cost map that has a group layer*, which is strictly more general.
+
+---
+
+## 10. One-paragraph summary (for the abstract)
+
+We present GRAM-Map, an end-to-end architecture for social robot navigation that exposes the robot's spatial belief as a learned, group-aware, time-conditioned cost map and plans over it with a 3D convolutional policy. Cost is composed from interpretable layers (individual occupancy, trajectory propagation, group cohesion hull, group repulsion, goal attractor, arena boundary), each rendered differentiably from a self-supervised group perception backbone (GroupDetector + SlotAttention). A self-supervised auxiliary loss grounds the cost map in observed future occupancy, mitigating the PPO instability that plagues prior end-to-end methods. We evaluate on a realistic crowd benchmark (Social Force humans, 20 agents, F-formations and leader-follower groups) against ORCA, Social Force, GARN, GRAM, and GRAM-v2, and ablate every cost layer. GRAM-Map beats prior learned baselines on success rate while reducing group crossing rate below classical methods, and produces visualizable cost maps that explain every robot decision.

@@ -164,9 +164,12 @@ def main():
 						 config=env_config, ax=ax, test_case=test_args.test_case, pretext_wrapper=config.env.use_wrapper)
 
 	if config.robot.policy not in ['orca', 'social_force', 'zone_based', 'f_formation']:
-		# Inject GRAM-v2 config flags so the loaded network is configured correctly
+		# Inject policy-specific config flags so the loaded network is configured correctly
 		if config.robot.policy == 'gram_v2':
 			algo_args.gram_v2_use_slots = config.gram_v2.use_slots
+		if config.robot.policy == 'gram_map':
+			algo_args._gram_map_cfg         = config.gram_map
+			algo_args.gram_map_use_aux_loss = False   # never compute aux loss during eval
 		# load the policy weights
 		actor_critic = Policy(
 			envs.observation_space.spaces,
