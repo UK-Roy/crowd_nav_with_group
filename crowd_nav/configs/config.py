@@ -61,10 +61,10 @@ class Config(object):
 
     # config for Groups
     group = BaseConfig()
-    group.num_groups = 2        # Stage 2+: 2 static groups; bump to 3 in Stage 4+
+    group.num_groups = 1        # Stage 1: 1 small group; bump to 2-3 across stages
 
-    group.min_size = 3
-    group.max_size = 4
+    group.min_size = 2
+    group.max_size = 2          # Stage 1: small groups so individuals still present
 
     group.min_distance = 2.0
 
@@ -232,14 +232,14 @@ class Config(object):
 
     # config for simulation
     sim = BaseConfig()
-    sim.circle_radius = 6 * np.sqrt(2)
-    sim.arena_size = 6
-    sim.human_num = 20
+    sim.circle_radius = 4
+    sim.arena_size = 4
+    sim.human_num = 5       # Stage 1: start sparse; increase to 10→15→20 across stages
     # Composition toggles. True/True = mixed (default, legacy behaviour).
     # True/False = individuals only. False/True = groups only (forces every
     # human into a group; clip human_num to total group capacity).
     sim.has_individuals = True
-    sim.has_groups = False      # Stage 1: individuals only; set True from Stage 2 onward
+    sim.has_groups = True       # must be True — frozen backbone needs groups to produce useful embeddings
     # actual human num in each timestep, in [human_num-human_num_range, human_num+human_num_range]
     sim.human_num_range = 0
     sim.predict_steps = 5
