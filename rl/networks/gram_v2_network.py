@@ -91,6 +91,9 @@ class GRAMV2Network(nn.Module):
         self.slot_attn = SlotAttention(embed_dim=EMBED_DIM, K=K_SLOTS)
         self._detector_use_pt = False  # updated by load_frozen_backbones
 
+        # Always-valid null token — prevents all-keys-masked NaN in cross-attn
+        self.null_embed = nn.Parameter(torch.zeros(EMBED_DIM))
+
         # ── Robot-query MLP ───────────────────────────────────────────────────
         self.robot_query_mlp = nn.Sequential(
             nn.Linear(ROBOT_RAW, 128), nn.ReLU(),
@@ -228,6 +231,12 @@ class GRAMV2Network(nn.Module):
         else:
             kv        = g                                                           # (TB, N, 64)
             key_valid = vmask_flat                                                  # (TB, N)
+
+        # Append null token — always valid, prevents all-keys-masked NaN
+        null_tok  = self.null_embed.unsqueeze(0).unsqueeze(0).expand(TB, 1, -1)   # (TB, 1, 64)
+        null_ok   = torch.ones(TB, 1, dtype=torch.bool, device=device)
+        kv        = torch.cat([kv, null_tok], dim=1)
+        key_valid = torch.cat([key_valid, null_ok], dim=1)
 
         key_pad = ~key_valid                                      # True = ignore
 
