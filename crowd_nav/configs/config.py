@@ -67,10 +67,10 @@ class Config(object):
 
     # config for Groups
     group = BaseConfig()
-    group.num_groups = 1        # Stage 1: 1 small group; bump to 2-3 across stages
+    group.num_groups = 2        # Stage 2: 2 groups; bump to 3 in Stage 4
 
-    group.min_size = 2
-    group.max_size = 2          # Stage 1: small groups so individuals still present
+    group.min_size = 3
+    group.max_size = 3          # Stage 2: slightly larger groups
 
     group.min_distance = 2.0
 
@@ -238,9 +238,9 @@ class Config(object):
 
     # config for simulation
     sim = BaseConfig()
-    sim.circle_radius = 4
-    sim.arena_size = 4
-    sim.human_num = 5       # Stage 1: start sparse; increase to 10→15→20 across stages
+    sim.circle_radius = 5
+    sim.arena_size = 5
+    sim.human_num = 10      # Stage 2: medium density; increase to 15→20 across stages
     # Composition toggles. True/True = mixed (default, legacy behaviour).
     # True/False = individuals only. False/True = groups only (forces every
     # human into a group; clip human_num to total group capacity).
