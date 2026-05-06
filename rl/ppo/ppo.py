@@ -88,6 +88,11 @@ class PPO():
                 total_loss.backward()
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
                                          self.max_grad_norm)
+                # Zero out NaN gradients before optimizer step to prevent weight corruption
+                # (NaN gradients can appear when backbone is first unfrozen in Stage C)
+                for p in self.actor_critic.parameters():
+                    if p.grad is not None:
+                        p.grad = p.grad.nan_to_num(0.0)
                 self.optimizer.step()
 
                 value_loss_epoch += value_loss.item()
