@@ -190,7 +190,7 @@ python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_h
 **Stage C — Fine-tune with aux loss (frozen backbone unlocked):**
 ```bash
 # config.py: gram_map.freeze_backbone=False, gram_map.use_aux_loss=True
-python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/gram_map/stageC --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 2e-4 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20 --resume --load_path trained_models/gram_map/stageB/checkpoints/<best>.pt
+python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/gram_map/stageC --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 5e-5 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20 --resume --load_path trained_models/gram_map/stageB/checkpoints/<best>.pt
 ```
 
 **Evaluate:**

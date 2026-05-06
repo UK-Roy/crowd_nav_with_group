@@ -243,8 +243,9 @@ class GRAMMapNetwork(nn.Module):
         no_grad = not self.detector.training
         with torch.no_grad() if no_grad else torch.enable_grad():
             _, _, g, _ = self.detector(feat_flat, vmask_flat)     # (TB,N,64)
+            g     = g.nan_to_num(0.0)                             # guard: GD NaN on first unfreeze
             _, alpha = self.slot_attn(g, vmask_flat)              # (TB,K,64),(TB,K,N)
-        alpha = alpha.nan_to_num(0.0)   # guard: backbone NaN on first unfreeze steps
+        alpha = alpha.nan_to_num(0.0)                             # guard: SA NaN on first unfreeze
 
         # ── Cost-map synthesis ────────────────────────────────────────────────
         p_flat    = p_all.reshape(TB, N_actual, 2)
@@ -252,7 +253,7 @@ class GRAMMapNetwork(nn.Module):
         goal_flat = goal_all.reshape(TB, 2)
 
         cost_stack = self.synthesizer(p_flat, v_flat, vmask_flat, goal_flat, alpha)
-        # (TB, C, H, W)
+        cost_stack = cost_stack.nan_to_num(0.0)   # guard: prevent NaN reaching planner/actor
 
         # ── Auxiliary occupancy loss (self-supervised) ────────────────────────
         if self.use_aux_loss and hasattr(self, 'occ_head'):
