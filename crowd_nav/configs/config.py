@@ -77,7 +77,7 @@ class Config(object):
     gram_map.phase2_checkpoint = 'trained_models/gram_v2/phase2_v2/best.pt'
     gram_map.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
     # Freeze backbone during Stage B (initial PPO); unfreeze for Stage C fine-tuning
-    gram_map.freeze_backbone   = True
+    gram_map.freeze_backbone   = False
     # BEV grid: grid_size × grid_size cells covering 2×grid_range metres square
     # Default 32×32 at 6m → 0.375 m/cell.  Increase to 48 or 64 if VRAM allows.
     gram_map.grid_size  = 32
@@ -87,7 +87,7 @@ class Config(object):
     # Self-supervised auxiliary occupancy loss
     # Stage B: False (frozen cost map, pure PPO)
     # Stage C: True  (joint PPO + aux loss)
-    gram_map.use_aux_loss    = False
+    gram_map.use_aux_loss    = True
     gram_map.aux_loss_weight = 0.1      # λ: weight of aux loss relative to PPO loss
 
     # config for Groups
