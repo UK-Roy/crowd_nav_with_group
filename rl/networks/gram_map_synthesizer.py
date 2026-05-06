@@ -145,11 +145,11 @@ class OccupancyHead(nn.Module):
             nn.Conv2d(in_channels, 32, 1),
             nn.ReLU(),
             nn.Conv2d(32, n_horizons, 1),
-            nn.Sigmoid(),
+            # No Sigmoid here — output raw logits for binary_cross_entropy_with_logits
         )
 
     def forward(self, cost_stack: torch.Tensor) -> torch.Tensor:
-        """cost_stack (B, C, H, W) → predicted occupancy (B, T, H, W)"""
+        """cost_stack (B, C, H, W) → logits (B, T, H, W) for BCE with logits"""
         return self.decoder(cost_stack)
 
     @staticmethod

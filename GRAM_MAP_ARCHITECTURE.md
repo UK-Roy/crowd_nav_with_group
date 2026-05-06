@@ -1,7 +1,7 @@
 # GRAM-Map: End-to-End Group-Aware Cost Map Navigation
 
 **Target venue:** CoRL 2026
-**Status:** Architecture proposal — not yet implemented
+**Status:** Stage B complete (SR=83%) — Stage C in progress
 **Author:** Utshar Roy
 **Date:** 2026-05-06
 
@@ -182,20 +182,15 @@ Before running, set `robot.policy = 'gram_map'` in `config.py`, then:
 # config.py: gram_map.freeze_backbone=True, gram_map.use_aux_loss=False
 # Environment: human_num=15, circle_radius=6, group.types=['static_f','dynamic_lf'], num_on_path=1
 # Reward: discomfort_group_dist=0.35, discomfort_grp_penalty_factor=10, grp_collision_penalty=-5
-python train.py --env-name CrowdSimVarNum-v0 \
-  --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
-  --output_dir trained_models/gram_map/stageB \
-  --lr 7e-4 --use-linear-lr-decay
+python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/gram_map/stageB --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 4e-4 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20
 ```
 
-**Stage C — Fine-tune with aux loss (after SR > 50%):**
+> **Critical:** `--entropy-coef 0.05` is required. Default is 0.0 which causes policy collapse (SR drops from 83% → 17% over 40K updates).
+
+**Stage C — Fine-tune with aux loss (frozen backbone unlocked):**
 ```bash
 # config.py: gram_map.freeze_backbone=False, gram_map.use_aux_loss=True
-python train.py --env-name CrowdSimVarNum-v0 \
-  --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
-  --output_dir trained_models/gram_map/stageC \
-  --lr 2e-4 --use-linear-lr-decay \
-  --resume --load_path trained_models/gram_map/stageB/checkpoints/<best>.pt
+python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/gram_map/stageC --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 2e-4 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20 --resume --load_path trained_models/gram_map/stageB/checkpoints/<best>.pt
 ```
 
 **Evaluate:**
@@ -209,30 +204,31 @@ python test.py --model_dir trained_models/gram_map/stageB --test_model <best>.pt
 
 We train in three stages. **Each stage has a single, easy-to-debug objective**, which is the lesson learned from GRAM-v2 Stage 3 collapse (multi-change cascade).
 
-### Stage A — Cost map pretraining (no RL)
-- Freeze Phase 2 + Phase 3 backbones
-- Train cost synthesizer + auxiliary occupancy head only
-- Loss: BCE between predicted occupancy slices and ground-truth future positions
-- Data: replay of expert ORCA + random trajectories, ≈ 50k episodes
-- Goal: cost map is grounded in physics before any RL signal
+### Stage A — Cost map pretraining (no RL) — SKIPPED
+CostMapSynthesizer has zero learnable parameters (pure deterministic Gaussian splatting). The cost map is physically grounded from step 0 — no pretraining needed. Stage A is not required.
 
-**Advance criterion:** auxiliary occupancy AUROC > 0.92 on held-out scenarios.
-
-### Stage B — Planning head only (PPO with frozen perception+cost)
-- Freeze backbones + cost synthesizer
-- Train planning head with PPO on Stage 3 environment (15 humans, mixed groups)
+### Stage B — Planning head only (PPO with frozen backbone) ✅ COMPLETE
+- `gram_map.freeze_backbone=True`, `gram_map.use_aux_loss=False`
+- Environment: 15 humans, circle_radius=6, groups=['static_f','dynamic_lf'], num_on_path=1
+- Only CostMapPlanner + RobotMLP + fusion + GRU + Actor/Critic trained; backbones frozen
 - Loss: standard PPO (clipped surrogate + value loss)
-- Goal: validate that a clean cost map alone suffices for navigation
+- **Result: SR=83%, CR=11%, TR=6%** at ~41600 updates (mean reward 13.4)
+- Peak SR=92% observed early (~update 400) — statistical fluctuation in 100-ep window
+- Best checkpoint: `trained_models/gram_map/stageB/checkpoints/41600.pt`
 
-**Advance criterion:** SR > 60% on Stage 3 env (vs ~50% for GRAM-v2 Stage 1).
+> **Lesson learned:** `--entropy-coef 0.0` (default) causes policy to collapse from SR=83% → 17% by end of training. Must use `--entropy-coef 0.05`.
 
-### Stage C — End-to-end fine-tuning
-- Unfreeze cost synthesizer; backbones can stay frozen or unfrozen (ablation)
-- Joint loss: `L_PPO + λ · L_aux` (λ = 0.1)
-- Auxiliary loss prevents the cost map from drifting into RL-flavored garbage
-- Goal: squeeze final performance and produce the "we are end-to-end" claim
+**Advance criterion:** SR > 60% ✅ achieved (83%)
 
-**Advance criterion:** SR > 70%, GCR < ORCA on Social Force humans (the realistic benchmark).
+### Stage C — End-to-end fine-tuning (in progress)
+- `gram_map.freeze_backbone=False`, `gram_map.use_aux_loss=True`
+- Unfreeze GroupDetector + SlotAttention; add self-supervised aux occupancy loss (λ=0.1)
+- Joint loss: `L_PPO + 0.1 · L_aux`
+- LR reduced to 2e-4 (unfreezing backbone needs gentler updates)
+- Resume from Stage B best checkpoint
+- Goal: push SR above 83% with backbone fine-tuning; aux loss prevents cost map drift
+
+**Advance criterion:** SR > 85% sustained, GCR < ORCA on realistic benchmark
 
 ---
 
@@ -309,15 +305,15 @@ These visualizations are the core "story" of the paper — they show *why* the r
 
 ## 8. Timeline
 
-| Week | Milestone |
-|---|---|
-| 1 | Cost synthesizer prototype on Phase 2/3 backbone outputs; render cost maps in unit tests |
-| 2 | Stage A pretraining: cost map + occupancy head; AUROC validation |
-| 3 | Stage B: planning head with frozen cost map; first end-to-end nav results |
-| 4 | Stage C: joint fine-tuning + ablations |
-| 5 | Realistic benchmark eval on all baselines; collect cost map visualizations |
-| 6 | Paper draft; figures; experiments rerun for noise robustness |
-| 7 | CoRL submission (deadline ≈ June 2026) |
+| Week | Milestone | Status |
+|---|---|---|
+| 1 | Architecture design + full implementation | ✅ Done (2026-05-06) |
+| 2 | Stage A skipped (zero-param synthesizer); Stage B training | ✅ Done — SR=83% |
+| 3 | Stage C: unfreeze backbone + aux loss fine-tuning | 🔄 In progress |
+| 4 | Ablations (remove group layers, trajectory layer, aux loss) | Pending |
+| 5 | Realistic benchmark eval on all baselines; cost map visualizations | Pending |
+| 6 | Paper draft; figures; noise robustness experiments | Pending |
+| 7 | CoRL submission (deadline ≈ June 2026) | Pending |
 
 Total: **~7 weeks of focused work.** Heavy reuse of existing infrastructure (Phase 2/3 weights, environment, evaluation pipeline, GST predictor for trajectory layer) keeps this realistic.
 

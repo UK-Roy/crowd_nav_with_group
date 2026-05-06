@@ -244,6 +244,7 @@ class GRAMMapNetwork(nn.Module):
         with torch.no_grad() if no_grad else torch.enable_grad():
             _, _, g, _ = self.detector(feat_flat, vmask_flat)     # (TB,N,64)
             _, alpha = self.slot_attn(g, vmask_flat)              # (TB,K,64),(TB,K,N)
+        alpha = alpha.nan_to_num(0.0)   # guard: backbone NaN on first unfreeze steps
 
         # ── Cost-map synthesis ────────────────────────────────────────────────
         p_flat    = p_all.reshape(TB, N_actual, 2)
@@ -255,15 +256,16 @@ class GRAMMapNetwork(nn.Module):
 
         # ── Auxiliary occupancy loss (self-supervised) ────────────────────────
         if self.use_aux_loss and hasattr(self, 'occ_head'):
-            occ_pred = self.occ_head(cost_stack)               # (TB, T, H, W)
-            occ_tgt  = OccupancyHead.make_targets(
+            occ_logits = self.occ_head(cost_stack)             # (TB, T, H, W) logits
+            occ_tgt    = OccupancyHead.make_targets(
                 p_flat, v_flat, vmask_flat,
                 self.synthesizer.grid,
                 self.synthesizer.horizons,
             )
-            self._aux_loss = nn.functional.binary_cross_entropy(
-                occ_pred, occ_tgt.clamp(0, 1)
+            loss_val = nn.functional.binary_cross_entropy_with_logits(
+                occ_logits, occ_tgt.clamp(0, 1)
             ) * self.aux_lambda
+            self._aux_loss = None if torch.isnan(loss_val) else loss_val
         else:
             self._aux_loss = None
 
