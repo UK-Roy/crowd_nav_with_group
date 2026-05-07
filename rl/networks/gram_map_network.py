@@ -136,7 +136,8 @@ class GRAMMapNetwork(nn.Module):
                 in_channels=n_cost_ch,
                 n_horizons=len(horizons),
             )
-        self._aux_loss = None   # set during forward when use_aux_loss=True
+        self._aux_loss        = None   # set during forward when use_aux_loss=True
+        self._last_cost_stack = None   # set during infer=True for visualization
 
     @property
     def recurrent_hidden_state_size(self) -> int:
@@ -254,6 +255,8 @@ class GRAMMapNetwork(nn.Module):
 
         cost_stack = self.synthesizer(p_flat, v_flat, vmask_flat, goal_flat, alpha)
         cost_stack = cost_stack.nan_to_num(0.0)   # guard: prevent NaN reaching planner/actor
+        if infer:
+            self._last_cost_stack = cost_stack.detach().cpu()
 
         # ── Auxiliary occupancy loss (self-supervised) ────────────────────────
         if self.use_aux_loss and hasattr(self, 'occ_head'):
