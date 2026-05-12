@@ -155,12 +155,12 @@ All outputs are saved to `ablation_figures/`.
 ## Group Detection: DBSCAN vs Perception Module
 
 Validates GRACE's GroupDetector backbone against DBSCAN in isolation, independent of the navigation policy.
-Results feed into two CoRL tables. All values are recorded in `perception_detection_results.txt`.
+Scripts live in `scripts/`. Results are saved to `results/perception_detection_results.txt` (auto-created if missing).
 
-| Table | Location in paper | What it shows |
+| Table | Location in paper | Script |
 |---|---|---|
-| **Table 1** | `grace.tex` §5.2 | Best-eps DBSCAN vs GroupDetector Phase1 vs Phase2 |
-| **Table 2** | `grace_appendix.tex` §A.2 | DBSCAN across all ε values (both feature modes) |
+| **Table 1** | `grace.tex` §5.2 — best-eps DBSCAN vs GroupDetector Phase1/Phase2 | `bash scripts/run_dbscan_comparison.sh` |
+| **Table 2** | `grace_appendix.tex` §A.2 — DBSCAN across all ε values | `bash scripts/run_eps_sweep.sh` |
 
 ---
 
@@ -168,15 +168,15 @@ Results feed into two CoRL tables. All values are recorded in `perception_detect
 
 **Normal path** — checkpoints and `results.pt` files already exist:
 ```bash
-bash run_dbscan_comparison.sh
+bash scripts/run_dbscan_comparison.sh
 ```
 Runs in ~30 s. Prints ASCII + LaTeX table. Results are written automatically into
-`perception_detection_results.txt` (Table 1 section). If the file doesn't exist it is
+`results/perception_detection_results.txt` (Table 1 section). If the file doesn't exist it is
 created automatically — no manual setup needed.
 
 **Force re-evaluation** — re-run model inference from checkpoint (ignores saved results.pt):
 ```bash
-bash run_dbscan_comparison.sh --force
+bash scripts/run_dbscan_comparison.sh --force
 ```
 
 **Full rebuild from scratch** — checkpoints missing or need to retrain:
@@ -194,10 +194,10 @@ python gram_v2_train_phase2.py \
     --save trained_models/gram_v2/phase2_v2
 
 # 4. Regenerate results.pt from the trained checkpoints
-bash run_perception_eval.sh
+bash scripts/run_perception_eval.sh
 
 # 5. Run comparison
-bash run_dbscan_comparison.sh
+bash scripts/run_dbscan_comparison.sh
 ```
 
 ---
@@ -206,40 +206,40 @@ bash run_dbscan_comparison.sh
 
 **Recommended — run the sweep script** (runs all ε values and records results automatically):
 ```bash
-bash run_eps_sweep.sh
+bash scripts/run_eps_sweep.sh
 ```
 Runs every ε (0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5) for both position-only and
 pos+vel modes. After each result completes, it writes the F1/Prec/Recall/ARI
-directly into the matching TBD row in `perception_detection_results.txt`.
+directly into the matching TBD row in `results/perception_detection_results.txt`.
 When the script finishes, all Table 2 rows are filled — copy them into
 `grace_appendix.tex` Table A2.
 
 ```bash
-bash run_eps_sweep.sh                 # default: 2000 test samples per eps (~5–10 min)
-bash run_eps_sweep.sh --n-test=5000   # more samples, more precise (~15–25 min)
-bash run_eps_sweep.sh --no-cuda       # force CPU
+bash scripts/run_eps_sweep.sh                 # default: 2000 test samples per eps (~5–10 min)
+bash scripts/run_eps_sweep.sh --n-test=5000   # more samples, more precise (~15–25 min)
+bash scripts/run_eps_sweep.sh --no-cuda       # force CPU
 ```
 
 **One row at a time** — if you want to fill individual rows and record automatically:
 ```bash
 # Position-only rows:
-python eval_detection_comparison.py --fixed-eps 0.5 --mode position --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 0.8 --mode position --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 1.0 --mode position --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 1.2 --mode position --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 2.0 --mode position --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 2.5 --mode position --dbscan-only --record-file perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 0.5 --mode position --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 0.8 --mode position --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 1.0 --mode position --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 1.2 --mode position --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 2.0 --mode position --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 2.5 --mode position --dbscan-only --record-file results/perception_detection_results.txt
 
 # Position + velocity rows:
-python eval_detection_comparison.py --fixed-eps 0.5 --mode pos+vel --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 0.8 --mode pos+vel --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 1.0 --mode pos+vel --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 1.2 --mode pos+vel --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 1.5 --mode pos+vel --dbscan-only --record-file perception_detection_results.txt
-python eval_detection_comparison.py --fixed-eps 2.0 --mode pos+vel --dbscan-only --record-file perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 0.5 --mode pos+vel --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 0.8 --mode pos+vel --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 1.0 --mode pos+vel --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 1.2 --mode pos+vel --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 1.5 --mode pos+vel --dbscan-only --record-file results/perception_detection_results.txt
+python eval_detection_comparison.py --fixed-eps 2.0 --mode pos+vel --dbscan-only --record-file results/perception_detection_results.txt
 ```
 
-Each command writes directly into `perception_detection_results.txt` (TBD → actual value).
+Each command writes directly into `results/perception_detection_results.txt` (TBD → actual value).
 When all rows are filled, update `grace_appendix.tex` Table A2 from the text file.
 
 ---

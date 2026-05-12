@@ -16,7 +16,10 @@
 
 set -euo pipefail
 
-RECORD="perception_detection_results.txt"
+# Always run from repo root regardless of where the script is called from
+cd "$(dirname "$0")/.."
+
+RECORD="results/perception_detection_results.txt"
 N_TEST=2000   # test samples per eps (increase for more precise results)
 EXTRA_ARGS="" # pass through any extra flags (e.g. --no-cuda)
 
@@ -28,6 +31,7 @@ for arg in "$@"; do
     esac
 done
 
+mkdir -p results
 if [ ! -f "$RECORD" ]; then
     echo ">>> $RECORD not found — creating it now..."
     python - <<'PYEOF'
@@ -50,7 +54,7 @@ Metrics:
 ────────────────────────────────────────────────────────────────────────────────
 TABLE 1 — MAIN COMPARISON  (CoRL main paper / grace.tex)
 ────────────────────────────────────────────────────────────────────────────────
-Run command:  bash run_dbscan_comparison.sh
+Run command:  bash scripts/run_dbscan_comparison.sh
 
 Method                              F1     Prec   Recall   ARI    AUROC
 ────────────────────────────────────────────────────────────────────────────────
@@ -67,7 +71,7 @@ Phase 2: enc.+GNN (GRACE backbone) TBD    TBD    TBD      TBD    TBD
 ────────────────────────────────────────────────────────────────────────────────
 TABLE 2 — DBSCAN EPSILON SWEEP  (CoRL appendix / grace_appendix.tex)
 ────────────────────────────────────────────────────────────────────────────────
-Run command:  bash run_eps_sweep.sh
+Run command:  bash scripts/run_eps_sweep.sh
 
                                      F1     Prec   Recall   ARI
 ────────────────────────────────────────────────────────────────────────────────
@@ -111,7 +115,7 @@ HISTORY OF RUNS
 ────────────────────────────────────────────────────────────────────────────────
 ================================================================================
 """
-with open("perception_detection_results.txt", "w") as f:
+with open("results/perception_detection_results.txt", "w") as f:
     f.write(content)
 print("Created perception_detection_results.txt")
 PYEOF

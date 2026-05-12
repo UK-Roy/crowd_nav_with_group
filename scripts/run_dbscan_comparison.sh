@@ -9,7 +9,7 @@
 #   - GroupDetector checkpoints must exist (trained_models/gram_v2/phase1_v2 and phase2_v2)
 #
 # If the model results are missing, run first:
-#   bash run_perception_eval.sh
+#   bash scripts/run_perception_eval.sh
 #
 # Usage:
 #   bash run_dbscan_comparison.sh              # uses saved results.pt (fast)
@@ -17,15 +17,19 @@
 
 set -euo pipefail
 
+# Always run from repo root regardless of where the script is called from
+cd "$(dirname "$0")/.."
+
 DATA_DIR="gram_v2_data"
 PHASE1_CKPT="trained_models/gram_v2/phase1_v2/B/best.pt"
 PHASE1_SAVE="trained_models/gram_v2/phase1_v2/B"
 PHASE2_CKPT="trained_models/gram_v2/phase2_v2/best.pt"
 PHASE2_SAVE="trained_models/gram_v2/phase2_v2"
 
-RECORD="perception_detection_results.txt"
+RECORD="results/perception_detection_results.txt"
 
 # ── Auto-create results record file if missing ────────────────────────────────
+mkdir -p results
 if [ ! -f "$RECORD" ]; then
     echo ">>> $RECORD not found — creating it now..."
     python - <<'PYEOF'
@@ -47,7 +51,7 @@ Metrics:
 ────────────────────────────────────────────────────────────────────────────────
 TABLE 1 — MAIN COMPARISON  (CoRL main paper / grace.tex)
 ────────────────────────────────────────────────────────────────────────────────
-Run command:  bash run_dbscan_comparison.sh
+Run command:  bash scripts/run_dbscan_comparison.sh
 
 Method                              F1     Prec   Recall   ARI    AUROC
 ────────────────────────────────────────────────────────────────────────────────
@@ -64,7 +68,7 @@ Phase 2: enc.+GNN (GRACE backbone) TBD    TBD    TBD      TBD    TBD
 ────────────────────────────────────────────────────────────────────────────────
 TABLE 2 — DBSCAN EPSILON SWEEP  (CoRL appendix / grace_appendix.tex)
 ────────────────────────────────────────────────────────────────────────────────
-Run command:  bash run_eps_sweep.sh
+Run command:  bash scripts/run_eps_sweep.sh
 
                                      F1     Prec   Recall   ARI
 ────────────────────────────────────────────────────────────────────────────────
@@ -108,7 +112,7 @@ HISTORY OF RUNS
 ────────────────────────────────────────────────────────────────────────────────
 ================================================================================
 """
-with open("perception_detection_results.txt", "w") as f:
+with open("results/perception_detection_results.txt", "w") as f:
     f.write(content)
 print("Created perception_detection_results.txt")
 PYEOF
@@ -123,7 +127,7 @@ fi
 
 if [ ! -f "$PHASE2_CKPT" ]; then
     echo "ERROR: Phase2 checkpoint not found: $PHASE2_CKPT"
-    echo "       Run: bash run_perception_eval.sh  to train / evaluate the model."
+    echo "       Run: bash scripts/run_perception_eval.sh  to train / evaluate the model."
     exit 1
 fi
 

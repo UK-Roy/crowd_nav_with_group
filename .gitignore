@@ -7,7 +7,8 @@ trained_models/
 
 # --- Evaluation outputs ---
 videos/
-results/
+results/*
+!results/perception_detection_results.txt
 episode.mp4
 *.mp4
 

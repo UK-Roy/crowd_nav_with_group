@@ -9,7 +9,7 @@
 #   - you want to regenerate metrics from existing checkpoints
 #
 # After this script completes, run:
-#   bash run_dbscan_comparison.sh      ← prints the full comparison table
+#   bash scripts/run_dbscan_comparison.sh      ← prints the full comparison table
 #
 # Usage:
 #   bash run_perception_eval.sh
@@ -18,6 +18,9 @@
 #   bash run_perception_eval.sh --phase2-only   # only Phase2 (GNN, GRACE backbone)
 
 set -euo pipefail
+
+# Always run from repo root regardless of where the script is called from
+cd "$(dirname "$0")/.."
 
 DATA_DIR="gram_v2_data"
 PHASE1_CKPT="trained_models/gram_v2/phase1_v2/B/best.pt"
@@ -89,4 +92,4 @@ fi
 
 echo ""
 echo "Perception eval complete."
-echo "Now run:  bash run_dbscan_comparison.sh"
+echo "Now run:  bash scripts/run_dbscan_comparison.sh"
