@@ -1,7 +1,65 @@
 # GRACE Training Issues Log
 
-**Branch:** `gram-map`
+**File location:** `TRAINING_ISSUES_LOG.md` in the root of the repo, **`gram-map` branch only**
 **Purpose:** Permanent record of every training failure, root cause, and fix applied during GRACE development. Check this file before starting a new training run to avoid repeating known mistakes.
+
+---
+
+## Why Training Results Were Not as Good as They Should Have Been
+
+The GRACE model achieved SR=0.92 on evaluation, but the **training process itself was severely broken** due to multiple entropy-related bugs. This section explains the chain of problems clearly so it is never repeated.
+
+### The short version
+
+Three bugs combined to make the GRACE training much harder than it needed to be:
+
+1. The entropy gradient in the PPO loss was **half its intended value** (typo in `FixedNormal.entrop()`).
+2. Because of a missing upper clamp, `logstd` grew without bound, making the policy sample **completely random actions during training** (σ grew to 1082 m/s — far beyond any real speed).
+3. NaN values from the unfrozen GroupDetector **silently corrupted gradients** early in stageC.
+
+Together, these meant that during stageB and stageC, the robot was navigating with *random noise actions* during training — it only appeared to succeed because test evaluation uses the *mean* action (not a sample). The model learned **despite** the broken training, not because of it. The training took longer, was noisier, and converged to a lower training reward (mean ~10–20) than it would have with correct entropy handling.
+
+### The full causal chain
+
+```
+entrop() typo (Issue 2)
+    → entropy term in PPO loss is halved
+    → entropy regularization is weaker than intended
+    → logstd gradient from policy loss dominates
+    → with entropy_coef=0.05 (too high), logstd is still pushed upward unchecked
+
+No logstd clamp (Issue 3)
+    → logstd grows: 0 → 7 over stageB (~42,000 updates)
+    → σ grows: 1 → 1082 m/s
+    → sampled training actions = random unit-circle direction (all clipped to v_pref)
+    → gradient signal for the policy mean is extremely noisy (high-variance estimator)
+    → training reward plateaus at 10–20 instead of converging toward 30+
+    → model learns slowly through the noise — but the MEAN policy is still reasonable
+
+NaN propagation (Issue 1)
+    → at stageC backbone unfreeze, GroupDetector produces NaN
+    → NaN flows to entropy → dist_entropy = NaN
+    → PPO loss = NaN → all gradients = NaN → weights corrupted
+    → training stalls / regresses in the first 200 updates of stageC
+    → needed nan_to_num guards to patch through
+
+Result: stageC reached SR=0.92 on test (deterministic mean actions),
+        but training was inefficient and mean reward never exceeded ~25.
+        With the entropy fixes now in place, ablation training should:
+          - converge faster (lower-variance gradients)
+          - reach higher training rewards (σ stays in [0.05, 1.65])
+          - be more stable (no NaN risk, no runaway)
+```
+
+### What is fixed now (as of 2026-05-12)
+
+| Bug | Fix | File |
+|---|---|---|
+| `entrop()` typo | Renamed to `entropy()` + `.sum(-1)` | `rl/networks/distributions.py` |
+| No logstd clamp | `.clamp(-3.0, 0.5)` in `DiagGaussian.forward()` | `rl/networks/distributions.py` |
+| NaN from backbone | `nan_to_num(0.0)` at g, alpha, cost_stack + gradients | `rl/networks/grace_network.py`, `rl/ppo/ppo.py` |
+
+**For all future training (ablations, new stages):** use `--entropy-coef 0.005`. The clamp makes the old `0.05` value unnecessary and harmful.
 
 ---
 
