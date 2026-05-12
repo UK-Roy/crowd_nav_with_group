@@ -459,3 +459,214 @@ Total: **~7 weeks of focused work.** Heavy reuse of existing infrastructure (Pha
 ## 10. One-paragraph summary (for the abstract)
 
 We present GRACE, an end-to-end architecture for social robot navigation that exposes the robot's spatial belief as a learned, group-aware, time-conditioned cost map and plans over it with a 3D convolutional policy. Cost is composed from interpretable layers (individual occupancy, trajectory propagation, group cohesion hull, group repulsion, goal attractor, arena boundary), each rendered differentiably from a self-supervised group perception backbone (GroupDetector + SlotAttention). A self-supervised auxiliary loss grounds the cost map in observed future occupancy, mitigating the PPO instability that plagues prior end-to-end methods. We evaluate on a realistic crowd benchmark (Social Force humans, 20 agents, F-formations and leader-follower groups) against ORCA, Social Force, GARN, GRAM, and GRAM-v2, and ablate every cost layer. GRACE beats prior learned baselines on success rate while reducing group crossing rate below classical methods, and produces visualizable cost maps that explain every robot decision.
+
+---
+
+## 11. Branch Overview and Working Process
+
+### How many branches exist
+
+| Branch | Purpose | Touch it when… |
+|---|---|---|
+| `gram-map` | **Daily development** — your working branch | Every day. All new code, experiments, bug fixes go here first |
+| `grace` | **CoRL 2026 paper** — clean, structured, paper-ready | When a result is confirmed and you want to add it to the paper |
+| `ral-benchmark` | **RA-L paper** — environment + TAGA code | When updating the environment or TAGA experiments |
+| `main` | Original CrowdNav++ baseline | Almost never — it's the starting point, not touched |
+| `gramv2` | Old GRAM-v2 curriculum experiments | Only if you need to look up old curriculum results |
+| `garn-training` | Old GARN training experiments | Only if you need to look up old GARN results |
+
+You have **6 branches total**. You will mostly work on `gram-map` and periodically push clean results to `grace`.
+
+---
+
+### Normal daily workflow: work in `gram-map`, then sync to `grace`
+
+**Step 1 — Make sure you are on `gram-map`:**
+```bash
+git checkout gram-map
+git status   # confirm you are on gram-map and see what is changed
+```
+
+**Step 2 — Do your work** (edit code, run experiments, fix bugs). When you are happy with a change:
+```bash
+git add <files you changed>
+git commit -m "short description of what you did"
+```
+
+**Step 3 — Find the commit hash you want to copy to `grace`:**
+```bash
+git log --oneline -10    # shows last 10 commits, each has a short hash like a1b2c3d
+```
+
+**Step 4 — Switch to `grace` and cherry-pick that commit:**
+```bash
+git checkout grace
+git cherry-pick a1b2c3d    # replace with your actual commit hash
+```
+
+This copies exactly that one commit from `gram-map` into `grace`. Everything else stays unchanged.
+
+**Step 5 — Switch back to `gram-map` to continue working:**
+```bash
+git checkout gram-map
+```
+
+**Example — you fixed a bug in `grace_network.py` on `gram-map` and want it in `grace` too:**
+```bash
+# On gram-map, after fixing and committing:
+git log --oneline -3
+# Output:
+#   f4a9c12  Fix NaN in cross-attention when all humans masked
+#   3d3fad9  Rename GRAM-Map → GRACE; add CoRL 2026 paper draft
+#   015dce9  The visualizer code is updated
+
+git checkout grace
+git cherry-pick f4a9c12     # copies only the NaN fix
+git checkout gram-map       # back to work
+```
+
+> **Rule of thumb:** only cherry-pick to `grace` when the result is confirmed and clean.
+> `gram-map` can have messy experiments. `grace` should always be in a working state.
+
+---
+
+### Ablation study workflow — step by step
+
+Ablations are run on `gram-map` first. Once confirmed, add results to the paper on `grace`.
+
+**Phase 1 — Train ablations on `gram-map`**
+
+Make sure you are on `gram-map` and Stage B checkpoint exists:
+```
+trained_models/gram_map/stageB/checkpoints/best.pt
+```
+
+Run each ablation (each takes ~1 GPU-day). You can run them one after another or in parallel on different GPUs:
+
+```bash
+# C1 — does group cost map matter?
+python train.py --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C1_no_group \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_no_group_layers
+
+# C2 — does having 3 slots (vs 1) matter?
+python train.py --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C2_K1 \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_K_slots 1
+
+# C3 — do trajectory prediction channels matter?
+python train.py --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C3_no_traj \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_no_traj_layers
+
+# C4 — does auxiliary loss matter?
+python train.py --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C4_no_aux \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_no_aux_loss
+
+# C5 — does learned slot assignment (vs uniform) matter?
+python train.py --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C5_uniform \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_uniform_alpha
+```
+
+**Phase 2 — Evaluate all ablations on `gram-map`**
+
+```bash
+python test.py --model_dir trained_models/gram_map/stageC              --test_model best.pt
+python test.py --model_dir trained_models/gram_map/ablation_C1_no_group --test_model best.pt
+python test.py --model_dir trained_models/gram_map/ablation_C2_K1       --test_model best.pt
+python test.py --model_dir trained_models/gram_map/ablation_C3_no_traj  --test_model best.pt
+python test.py --model_dir trained_models/gram_map/ablation_C4_no_aux   --test_model best.pt
+python test.py --model_dir trained_models/gram_map/ablation_C5_uniform  --test_model best.pt
+```
+
+Or get the full comparison table at once. First add these entries to `POLICY_REGISTRY` at the top of `record_comparison.py`:
+```python
+dict(label='grace_full', policy_key='grace', model_dir='trained_models/gram_map/stageC',               test_model='best.pt', with_taga=False),
+dict(label='grace_C1',   policy_key='grace', model_dir='trained_models/gram_map/ablation_C1_no_group',  test_model='best.pt', with_taga=False),
+dict(label='grace_C2',   policy_key='grace', model_dir='trained_models/gram_map/ablation_C2_K1',        test_model='best.pt', with_taga=False),
+dict(label='grace_C3',   policy_key='grace', model_dir='trained_models/gram_map/ablation_C3_no_traj',   test_model='best.pt', with_taga=False),
+dict(label='grace_C4',   policy_key='grace', model_dir='trained_models/gram_map/ablation_C4_no_aux',    test_model='best.pt', with_taga=False),
+dict(label='grace_C5',   policy_key='grace', model_dir='trained_models/gram_map/ablation_C5_uniform',   test_model='best.pt', with_taga=False),
+```
+
+Then run:
+```bash
+python record_comparison.py \
+    --policies grace_full,grace_C1,grace_C2,grace_C3,grace_C4,grace_C5 \
+    --seeds 0,1,2,3,4 --no-video
+```
+
+Results saved to `results/metrics.csv`.
+
+**Phase 3 — Visualise cost maps (see what each ablation removes)**
+
+```bash
+python visualize_cost_map.py --model_dir trained_models/gram_map/stageC              --test_model best.pt --seed 3 --out videos/costmap_full.mp4
+python visualize_cost_map.py --model_dir trained_models/gram_map/ablation_C1_no_group --test_model best.pt --seed 3 --out videos/costmap_C1.mp4
+python visualize_cost_map.py --model_dir trained_models/gram_map/ablation_C3_no_traj  --test_model best.pt --seed 3 --out videos/costmap_C3.mp4
+python visualize_cost_map.py --model_dir trained_models/gram_map/ablation_C5_uniform  --test_model best.pt --seed 3 --out videos/costmap_C5.mp4
+```
+
+**Phase 4 — Confirm results, then update the paper on `grace`**
+
+Once you have the numbers from `results/metrics.csv`:
+
+```bash
+# Check what commits you made on gram-map (to find what to cherry-pick)
+git log --oneline -10
+
+# Switch to grace and open the paper
+git checkout grace
+
+# Edit the ablation table in the paper (fill in the -- placeholders)
+# File: corl_2026/corl_2026_template_submission/grace.tex
+# Look for Table 2 / \tbd placeholders and replace with actual numbers
+
+# Commit the updated paper
+git add corl_2026/corl_2026_template_submission/grace.tex
+git commit -m "Fill ablation Table 2 with measured results"
+
+# Switch back to gram-map
+git checkout gram-map
+```
+
+---
+
+### Quick reference: most common commands
+
+```bash
+# See which branch you are on
+git status
+
+# Switch to a branch
+git checkout gram-map
+git checkout grace
+
+# See recent commits (to find hash for cherry-pick)
+git log --oneline -10
+
+# Copy one commit from gram-map to grace
+git checkout grace
+git cherry-pick <hash>
+git checkout gram-map
+
+# See what is different between gram-map and grace
+git diff gram-map..grace --stat
+```
