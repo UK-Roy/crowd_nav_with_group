@@ -43,11 +43,18 @@ SR + CR + TR ≈ 1.0 is a sanity check.
 
 ## How to find best.pt for each ablation
 
-After training finishes, run this to find the best checkpoint:
+> **Important:** Always pick best.pt by **test SR** (from `test.py`), not by training reward.
+> Training reward is only a shortcut to shortlist candidates — test SR is the ground truth.
+> Example: stageC had `41000.pt` (train reward 20.36) vs `41665.pt` (train reward 6.57).
+> Training reward correctly predicted the winner, but only `test.py` confirmed SR=0.92 vs 0.87.
+
+### Step 1 — Find top 3 candidates by training reward
+
+Change `stage` to your ablation directory, then run:
 ```bash
 python3 -c "
 import csv, os
-stage = 'trained_models/gram_map/ablation_C1_no_group'  # change this
+stage = 'trained_models/gram_map/ablation_C1_no_group'  # <-- change this each time
 rows = []
 with open(f'{stage}/progress.csv') as f:
     reader = csv.DictReader(f)
@@ -55,22 +62,40 @@ with open(f'{stage}/progress.csv') as f:
         rows.append((float(row['eprewmean']), int(row['misc/nupdates'])))
 rows.sort(reverse=True)
 avail = set(int(f.replace('.pt','')) for f in os.listdir(f'{stage}/checkpoints/') if f.endswith('.pt'))
-print('Best available:')
+print('Top 3 available checkpoints by training reward:')
+count = 0
 for rew, upd in rows:
     if upd in avail:
         print(f'  update={upd}  reward={rew:.2f}')
-        break
+        count += 1
+        if count >= 3: break
 "
 ```
-Then copy it to `best.pt`:
+
+### Step 2 — Run test.py on those 3 checkpoints
+
 ```bash
-cp trained_models/gram_map/ablation_C1_no_group/checkpoints/<update>.pt \
+# Replace XXXXX with each of the 3 update numbers from Step 1
+python test.py --model_dir trained_models/gram_map/ablation_C1_no_group --test_model XXXXX.pt
+```
+Check the log: `cat trained_models/gram_map/ablation_C1_no_group/test/test_XXXXX.pt.log`
+Look for: `Testing success rate: X.XX`
+
+### Step 3 — Copy the highest SR checkpoint to best.pt
+
+```bash
+# Replace XXXXX with the update number that had the highest test SR
+cp trained_models/gram_map/ablation_C1_no_group/checkpoints/XXXXX.pt \
    trained_models/gram_map/ablation_C1_no_group/checkpoints/best.pt
 ```
-Then evaluate:
+The original `XXXXX.pt` stays on disk — `best.pt` is just a copy with a fixed name.
+
+### Step 4 — Run final evaluation on best.pt
+
 ```bash
 python test.py --model_dir trained_models/gram_map/ablation_C1_no_group --test_model best.pt
 ```
+Read the final SR, CR, TR, GCR from the log and fill in the Results Table above.
 
 ---
 
