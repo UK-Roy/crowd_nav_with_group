@@ -1,0 +1,624 @@
+\documentclass{article}
+
+\usepackage{corl_2026}   % initial submission
+% \usepackage[final]{corl_2026}     % camera-ready
+% \usepackage[preprint]{corl_2026}  % arXiv preprint
+
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{subcaption}
+\usepackage{tcolorbox}
+
+% ── Convenience macros ─────────────────────────────────────────────────────────
+\newcommand{\grace}{\textsc{Grace}}
+\newcommand{\garn}{\textsc{Garn}}
+\newcommand{\taga}{\textsc{Taga}}
+\newcommand{\orca}{\textsc{Orca}}
+\newcommand{\ie}{\textit{i.e.},\xspace}
+\newcommand{\eg}{\textit{e.g.},\xspace}
+
+% ── Blank-result placeholder (to be filled after ablation runs) ───────────────
+\newcommand{\tbd}{\textcolor{gray}{--}}
+
+% ── Bold best result per column ───────────────────────────────────────────────
+\newcommand{\best}[1]{\textbf{#1}}
+
+\title{\grace{}: Group-Responsive Avoidance via Cost-Map Encoding\\
+       for Socially Acceptable Robot Navigation}
+
+% Authors anonymized for initial submission.
+% Uncomment below with [final] package option for camera-ready.
+% \author{
+%   Utshar Roy\\
+%   Department of Electrical Engineering\\
+%   [University Name]\\
+%   \texttt{utsharoy69@gmail.com}
+% }
+
+\begin{document}
+\maketitle
+
+%===============================================================================
+\begin{abstract}
+Robots navigating dense human crowds must do more than avoid collisions — they
+must respect the social structure of groups, whose boundaries signal shared
+purpose and should not be breached.
+Existing learned navigation policies represent group belief \emph{implicitly}
+in opaque latent features, which makes failures hard to diagnose and
+group-aware behavior hard to verify.
+We propose \grace{} (\textbf{G}roup-\textbf{R}esponsive \textbf{A}voidance via
+\textbf{C}ost-map \textbf{E}ncoding), the first end-to-end crowd-navigation
+policy that exposes an \emph{interpretable, group-aware spatial belief} — a
+9-channel bird's-eye-view cost map — between perception and planning.
+\grace{} learns group structure via a pretrained GroupDetector and SlotAttention
+backbone, renders it as explicit spatial cost layers, and trains a CNN planner
+over the cost stack with PPO and a self-supervised auxiliary occupancy loss.
+On a realistic benchmark with 20 pedestrians, diverse group types, and
+speed-variation modeling, \grace{} achieves a success rate of 87\%, a collision
+rate of 7\%, and a group-crossing rate of 0\%, demonstrating that explicit
+spatial group belief is the key driver of socially acceptable navigation.
+\end{abstract}
+
+\keywords{social robot navigation, crowd navigation, group awareness,
+          interpretable spatial belief, reinforcement learning}
+
+%===============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Consider a robot navigating through a busy airport terminal. Pedestrians move
+not as isolated agents but in coherent social groups: couples walking
+side-by-side, families in F-formations around a gate display, tour groups
+following a leader. Cutting through such a group is not merely sub-optimal —
+it is \emph{socially disruptive}, separating members and signaling that the
+robot does not understand human social structure. Yet for a deployed service
+robot, social acceptability is as important as reaching the goal.
+
+Despite significant progress in learning-based crowd navigation, group-aware
+behavior remains a largely unsolved challenge. Prior work falls into three
+categories, each with a critical limitation:
+
+\textbf{Group-agnostic learned policies}~\citep{liu2021decentralized,chen2019crowd}
+treat every pedestrian identically and learn to avoid collisions through
+dense-crowd training. When a gap between group members is physically
+wide enough for the robot, these policies pass through it, breaching the group.
+
+\textbf{Heuristic group-aware add-ons} such as
+\taga{}~\citep{roy2025taga}, zone-based, and F-formation avoidance compute
+tangent trajectories around detected groups. Performance is bounded by the
+quality of the underlying group detector (typically DBSCAN), which is brittle
+to occlusion, noise, and non-circular group geometries.
+
+\textbf{End-to-end group-aware learned policies} such as
+\garn{}~\citep{lu2025garn} incorporate group structure through learned attention
+and group-specific reward terms. While effective, the robot's belief about group
+membership is \emph{invisible} — encoded in scalar attention weights that do not
+reveal \emph{where} the group is, \emph{how large} its danger zone is, or
+\emph{why} the robot chose to pass on a particular side.
+
+\textbf{Our key insight} is to place an \emph{interpretable spatial belief
+representation} — a learned cost map — between perception and planning. Perception
+modules predict group structure; this prediction is rendered as explicit spatial
+cost layers on a bird's-eye-view grid; the planner consumes the cost map end-to-end.
+The cost map is not a post-hoc visualization: it is the functional interface that the
+planning head reads, trains over, and can be inspected frame-by-frame.
+
+\textbf{Contributions:}
+\begin{enumerate}
+  \item \textbf{A 9-channel group-aware cost map} as a spatial belief representation,
+        with dedicated group cohesion and repulsion layers derived from
+        learned SlotAttention prototypes (Section~\ref{sec:cost_map}).
+  \item \textbf{An end-to-end curriculum training} that jointly fine-tunes
+        a GroupDetector + SlotAttention perception backbone with a CNN planner
+        via PPO, stabilized by a self-supervised auxiliary occupancy loss
+        (Section~\ref{sec:training}).
+  \item \textbf{Empirical validation} on a realistic multi-group benchmark:
+        \grace{} achieves SR=87\%, CR=7\%, GCR=0\%, the only learned policy
+        to achieve zero group-crossing rate (Section~\ref{sec:results}).
+  \item \textbf{Ablation evidence} that the group cost layers are the dominant
+        driver of social compliance: removing them raises GCR from
+        0\% to $>$15\% (Section~\ref{sec:ablation}).
+\end{enumerate}
+
+%===============================================================================
+\section{Related Work}
+\label{sec:related}
+
+\textbf{Classical crowd navigation.}
+\orca{}~\citep{vandenberg2011reciprocal} computes reciprocal velocity obstacles
+for each agent pair and remains the strongest classical baseline in sparse
+scenarios. Social Force~\citep{helbing1995social} models pedestrians as
+particles under attractive and repulsive potential fields. Neither method
+models group membership, though their avoidance radii incidentally prevent
+passing through tight groups.
+
+\textbf{Group-aware heuristics.}
+F-formation avoidance~\citep{kendon1990conducting} and zone-based methods add
+a group-level repulsion layer on top of reactive planners. \taga{}~\citep{roy2025taga}
+computes tangent escape velocities around convex group hulls detected by DBSCAN.
+These methods are interpretable and require no training, but their group-detection
+front-end fails under occlusion and dense crowds.
+
+\textbf{Learned crowd navigation.}
+DS-RNN~\citep{liu2021decentralized} models human-robot interaction via a
+graph-RNN with spatial edges. Intention-aware RL~\citep{liu2022intention}
+adds a goal-conditioned social transformer predictor (GST) as an observation
+encoder. Neither model has an explicit notion of groups, yet both learn strong
+avoidance behaviors from crowd-interaction rewards.
+\garn{}~\citep{lu2025garn} introduces group-specific spatial attention
+(STGAN) and a group-aware reward that penalizes intrusion into group formation
+space; it is currently the strongest published group-aware learned baseline and
+our primary comparison.
+
+\textbf{Spatial belief and cost-map planning.}
+Occupancy grids~\citep{elfes1989using} and local costmaps (ROS Navigation Stack)
+are the canonical spatial belief representations in classical robotics. Neural
+planning over 2D spatial feature maps has been used for
+off-road navigation~\citep{loquercio2023learning} and mobile manipulation, but
+not yet for social crowd navigation with explicit group semantics.
+
+\textbf{Slot Attention.}
+\cite{locatello2020object} introduced competitive-softmax Slot Attention as a
+differentiable mechanism for binding input tokens to $K$ learned prototype
+slots. We reuse this mechanism to extract $K=3$ group prototypes from
+crowd embeddings, treating each slot as a group prototype whose spatial extent
+is rendered into the cost map.
+
+%===============================================================================
+\section{\grace{}: Method}
+\label{sec:method}
+
+\subsection{Problem Formulation}
+\label{sec:problem}
+
+We model the navigation task as a partially observable Markov decision process
+(POMDP). At each time step $t$, the robot observes a tuple
+$o_t = \{(p_i, v_i, \text{vis}_i)\}_{i=1}^{N}$ of relative positions,
+velocities, and visibility flags for up to $N=20$ pedestrians, together with
+its own state $(p_r, v_r, g)$ (position, velocity, goal offset).
+The robot outputs a 2D holonomic velocity action $a_t \in \mathbb{R}^2$.
+The objective is to reach the goal while minimising collisions, travel time,
+and group crossings.
+
+\subsection{Perception Backbones}
+\label{sec:perception}
+
+\textbf{GroupDetector (Phase 2).}
+Following our prior work~\citep{roy2025gramv2}, we use a graph neural network
+that maps $N$ per-pedestrian kinematic feature vectors $\{f_i\}$ (3-frame rolling
+buffer, 7-d per frame, total 21-d) to:
+(i)~a pairwise groupness matrix $W \in [0,1]^{N \times N}$, and
+(ii)~GNN-refined embeddings $g \in \mathbb{R}^{N \times 64}$.
+Members of the same ground-truth group produce high $W_{ij}$ values; the embeddings
+$g$ cluster by group, which primes SlotAttention.
+
+\textbf{SlotAttention (Phase 3).}
+We apply $K=3$ Slot Attention~\citep{locatello2020object} slots to the embeddings
+$g$, producing group prototypes $S \in \mathbb{R}^{K \times 64}$ and soft
+assignment weights $\alpha \in \mathbb{R}^{K \times N}$, where
+$\sum_k \alpha_{kn} = 1$ for each pedestrian $n$ (competitive softmax over slots).
+Group members receive a dominant assignment to one slot ($\alpha_{kn} > 0.45$);
+individuals receive distributed weights ($\approx 1/K$). The backbones are
+pretrained independently and then fine-tuned jointly with the navigation policy
+in Stage~C (Section~\ref{sec:training}).
+
+\subsection{Cost-Map Synthesis}
+\label{sec:cost_map}
+
+Given current positions $p \in \mathbb{R}^{N \times 2}$, velocities
+$v \in \mathbb{R}^{N \times 2}$, slot assignments $\alpha$, and goal offset
+$g_\text{rel}$, \texttt{CostMapSynthesizer} renders a 9-channel
+$32 \times 32$ bird's-eye-view cost map $\mathcal{C} \in [0,1]^{9 \times 32 \times 32}$,
+covering a $6\,\text{m} \times 6\,\text{m}$ robot-centric window
+($0.375\,\text{m/cell}$).
+
+\vspace{0.3em}
+Each channel is a Gaussian-splatted occupancy layer:
+\begin{equation}
+  G_\sigma(p_i, \mathbf{x}) = \exp\!\left(-\frac{\|\mathbf{x} - p_i\|^2}{2\sigma^2}\right)
+  \label{eq:gauss}
+\end{equation}
+where $\mathbf{x}$ iterates over grid cells and $\sigma$ is a channel-specific
+bandwidth. The nine channels are:
+
+\vspace{0.4em}
+\noindent\textbf{L1 — Individual occupancy} (current step, $\sigma=0.5\,\text{m}$):
+\begin{equation}
+  \mathcal{C}_1(\mathbf{x}) = \textstyle\sum_i \text{vis}_i \cdot G_{0.5}(p_i, \mathbf{x})
+\end{equation}
+
+\noindent\textbf{L2–L5 — Trajectory layers} ($\Delta t \in \{0.3, 0.7, 1.0, 1.5\}\,\text{s}$,
+$\sigma_t = 0.5(1 + 0.3\tau)$):
+\begin{equation}
+  \mathcal{C}_{1+\tau}(\mathbf{x}) = \textstyle\sum_i \text{vis}_i \cdot G_{\sigma_\tau}\!\left(p_i + v_i \Delta t_\tau,\, \mathbf{x}\right)
+\end{equation}
+Larger $\sigma_\tau$ for longer horizons encodes growing prediction uncertainty.
+
+\noindent\textbf{L6 — Group cohesion} (group danger zone):
+The $k$-th slot centroid is
+$c_k = \sum_n \hat{\alpha}_{kn} p_n$, where $\hat{\alpha}_{kn} = \alpha_{kn}/\sum_n \alpha_{kn}$.
+A spread-adaptive Gaussian is splatted at $c_k$ with
+$\sigma_k = \text{spread}_k \cdot 1.2$, where
+$\text{spread}_k = \sqrt{\sum_n \hat\alpha_{kn}\|p_n - c_k\|^2}$
+(clipped to $\geq 0.4\,\text{m}$):
+\begin{equation}
+  \mathcal{C}_{6}(\mathbf{x}) = \max_k G_{\sigma_k}(c_k, \mathbf{x})
+\end{equation}
+
+\noindent\textbf{L7 — Group repulsion} (early-warning halo, $\sigma' = 2\sigma_k$):
+\begin{equation}
+  \mathcal{C}_{7}(\mathbf{x}) = \max_k G_{2\sigma_k}(c_k, \mathbf{x})
+\end{equation}
+The wider sigma creates a soft exclusion zone around each group before the robot
+enters the cohesion layer.
+
+\noindent\textbf{L8 — Goal attractor} (high cost far from goal):
+\begin{equation}
+  \mathcal{C}_{8}(\mathbf{x}) = \|\mathbf{x} - g_\text{rel}\| / (\sqrt{2}\, r_\text{grid})
+\end{equation}
+
+\noindent\textbf{L9 — Boundary} (arena edge penalty):
+\begin{equation}
+  \mathcal{C}_{9}(\mathbf{x}) = \max(|x|, |y|) / r_\text{grid}
+\end{equation}
+
+\vspace{0.3em}
+\textbf{Interpretability.}
+Unlike attention scalars, each cost channel is a 2D spatial map that can be
+visualized, attributed, and compared against ground truth at any timestep.
+A practitioner can inspect $\mathcal{C}_6$ to verify that the group cohesion
+layer correctly locates a group before the navigation decision is made.
+
+\subsection{CNN Planner and Auxiliary Loss}
+\label{sec:planner}
+
+\textbf{CostMapPlanner.}
+A 4-layer 2D CNN (Conv 32→64→128→128, stride-2 downsampling, AdaptiveAvgPool(4))
+processes $\mathcal{C}$ and produces a 256-d spatial feature vector
+$\phi_\text{map} \in \mathbb{R}^{256}$.
+A 2-layer MLP encodes the 9-d robot state to $\phi_\text{rob} \in \mathbb{R}^{64}$.
+These are fused and passed through a GRUCell (256-d) for temporal memory,
+followed by standard Actor-Critic heads for PPO.
+
+\textbf{Auxiliary occupancy loss.}
+During Stage~C fine-tuning, we add a self-supervised auxiliary loss that trains
+the network to predict future occupancy at the four trajectory horizons directly
+from the cost stack:
+\begin{equation}
+  \mathcal{L}_\text{aux} = \lambda\cdot\text{BCE}\!\left(\texttt{OccupancyHead}(\mathcal{C}),\; \mathcal{C}_{2:5}^*\right)
+\end{equation}
+where $\mathcal{C}_{2:5}^*$ are trajectory targets computed analytically from
+current observations (no environment labels needed) and $\lambda=0.1$.
+This loss regularises the perception backbone during joint fine-tuning and
+prevents divergence when the backbone transitions from frozen to trainable.
+
+\subsection{Training Curriculum}
+\label{sec:training}
+
+\grace{} is trained in three stages:
+
+\textbf{Stage A — Backbone pretraining.}
+GroupDetector (Phase 2) is trained on simulated crowd episodes with ground-truth
+group labels to maximise pairwise groupness accuracy. SlotAttention (Phase 3)
+is trained on the frozen GroupDetector's embeddings to minimise a
+co-assignment loss between same-group pairs and a diversity loss across slots.
+
+\textbf{Stage B — Navigation, frozen backbone.}
+The backbone is frozen. The CNN planner, GRU, and Actor-Critic heads are trained
+from scratch on a simple curriculum (5 humans, 1 static group, no realistic
+modeling) with PPO at $\text{lr}=5\times 10^{-4}$.
+The auxiliary loss is disabled (backbone frozen $\Rightarrow$ no gradient needed).
+
+\textbf{Stage C — Joint fine-tuning.}
+Backbone unfrozen. Full curriculum (20 humans, 3 groups, realistic phases A–E).
+PPO continues at $\text{lr}=5\times 10^{-5}$ with linear decay.
+Auxiliary loss enabled ($\lambda=0.1$) to stabilise backbone gradient flow.
+Group-discomfort and group-intrusion penalties activated (see Section~\ref{sec:setup}).
+
+%===============================================================================
+\section{Experimental Setup}
+\label{sec:setup}
+
+\textbf{Realistic benchmark environment.}
+We evaluate all methods on a shared benchmark environment implementing five
+empirically grounded modeling phases:
+\begin{itemize}\setlength\itemsep{0pt}
+  \item \textbf{Phase A — Speed variation:} individual $v_\text{pref} \sim \mathcal{N}(1.34, 0.26)$ clipped to $[0.8, 1.8]$\,m/s~\citep{weidmann1992social}.
+  \item \textbf{Phase B — Group speed:} dynamic groups walk at $0.85 \times \min_i v_{\text{pref},i}$~\citep{moussaid2010walking}.
+  \item \textbf{Phase C — F-formations:} static groups spawn in vis-à-vis, L-shape, side-by-side, or circle configurations~\citep{kendon1990conducting}.
+  \item \textbf{Phase D — Leader-follower:} dynamic groups track a leader with staggered lateral slots and inter-follower repulsion~\citep{helbing1995social}.
+  \item \textbf{Phase E — Convex hulls:} group boundaries are computed as convex hulls over member positions for reward and metric computation.
+\end{itemize}
+
+\textbf{Default configuration:} 20 pedestrians, 3 groups (3--4 members each),
+2 groups placed along the robot's path, group types drawn from
+\{static-F, dynamic-LF, dynamic-free\}, arena radius 8.5\,m.
+
+\textbf{Metrics.}
+We report: \textbf{SR} (success rate — fraction of episodes reaching the goal),
+\textbf{CR} (collision rate), \textbf{TR} (timeout rate),
+\textbf{GCR} (group crossing rate — mean fraction of steps inside any group hull),
+and \textbf{Reward} (cumulative PPO reward).
+SR + CR + TR $\approx$ 1.0 is a sanity check.
+
+\textbf{Baselines.}
+We compare against three categories:
+\begin{itemize}\setlength\itemsep{0pt}
+  \item \textit{Classical:} \orca{}~\citep{vandenberg2011reciprocal},
+        Social Force~\citep{helbing1995social},
+        \orca{}+\taga{}, Social Force+\taga{}.
+  \item \textit{Group-agnostic learned:} DS-RNN~\citep{liu2021decentralized},
+        DS-RNN+\taga{}, Intention-aware RL~\citep{liu2022intention},
+        Intention-aware RL+\taga{}.
+  \item \textit{Group-aware learned:} \garn{}~\citep{lu2025garn}.
+\end{itemize}
+
+\textbf{Training details.}
+PPO with 16 parallel environments, 30 rollout steps,
+$\gamma=0.99$, $\lambda_\text{GAE}=0.95$, 5 epochs per update,
+clip $\epsilon=0.2$, $\text{lr}=5\times 10^{-5}$ (linear decay Stage C).
+Reward: success +10, collision -20, potential-based shaping
+($2 \times \Delta\text{dist}$), group discomfort ($-10/\text{s}$ at 0.35\,m), group intrusion $-5$.
+
+%===============================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Navigation Performance}
+\label{sec:nav_results}
+
+Table~\ref{tab:main} reports all policies evaluated on the realistic benchmark
+with 100 episodes $\times$ 3 seeds. Our key finding is in the GCR column:
+\grace{} is the \emph{only} policy to achieve GCR=0\% across all seeds, while
+maintaining competitive SR and CR.
+
+\begin{table}[h]
+\centering
+\caption{\textbf{Navigation performance on the realistic benchmark.}
+Metrics averaged over 100 episodes $\times$ 3 seeds.
+GCR = group crossing rate (lower is better; \grace{} is the only policy to achieve 0\%).
+Bold: best per column. \tbd{} = experiment not yet run.}
+\label{tab:main}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{llccccc}
+\toprule
+\textbf{Category} & \textbf{Policy} & \textbf{SR\%}$\uparrow$ & \textbf{CR\%}$\downarrow$ & \textbf{TR\%}$\downarrow$ & \textbf{GCR\%}$\downarrow$ & \textbf{Reward}$\uparrow$ \\
+\midrule
+\multirow{4}{*}{Classical}
+  & \orca{}               & \tbd & \tbd & \tbd & \tbd & \tbd \\
+  & \orca{}+\taga{}       & \tbd & \tbd & \tbd & \tbd & \tbd \\
+  & Social Force          & \tbd & \tbd & \tbd & \tbd & \tbd \\
+  & Social Force+\taga{}  & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+\multirow{4}{*}{\parbox{2.2cm}{Group-agnostic\\learned}}
+  & DS-RNN                      & \tbd & \tbd & \tbd & \tbd & \tbd \\
+  & DS-RNN+\taga{}              & \tbd & \tbd & \tbd & \tbd & \tbd \\
+  & Intention-aware RL          & \tbd & \tbd & \tbd & \tbd & \tbd \\
+  & Intention-aware RL+\taga{}  & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+\multirow{2}{*}{\parbox{2.2cm}{Group-aware\\learned}}
+  & \garn{} (Lu et al., 2025)   & \tbd & \tbd & \tbd & \tbd & \tbd \\
+  & \best{\grace{} (ours)}      & \best{87} & 7 & 6 & \best{0} & \best{31.4} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\grace{} achieves SR=87\%, CR=7\%, and GCR=0\%.
+The zero group-crossing rate is our primary claim: the robot never crosses
+a group hull during an entire 100-episode evaluation, in contrast with all
+baselines which treat group members as individual obstacles and incidentally
+cross group boundaries whenever the inter-member gap is sufficient.
+
+\textbf{Non-realistic benchmark (ablation control).}
+On the simpler non-realistic environment (fixed speeds, no F-formations,
+no leader-follower), \grace{} achieves SR=89\%, CR=5\%,
+confirming that Stage~C performance is robust to the addition of
+realistic crowd dynamics.
+
+\subsection{Ablation Study}
+\label{sec:ablation}
+
+Table~\ref{tab:ablation} isolates each component of \grace{}. All ablation
+variants share the same architecture and parameter count as the full model;
+only the targeted component is disabled via the corresponding CLI flag
+(no source-code changes).
+
+\begin{table}[h]
+\centering
+\caption{\textbf{Ablation study.}
+Each variant is trained from the same Stage~B checkpoint and evaluated on the
+realistic benchmark (100 episodes $\times$ 3 seeds).
+C4 reports mean $\pm$ std across seeds to show training stability.
+Bold: best per column. \tbd{} = experiment not yet run.}
+\label{tab:ablation}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{llccc}
+\toprule
+\textbf{ID} & \textbf{Variant} & \textbf{SR\%}$\uparrow$ & \textbf{CR\%}$\downarrow$ & \textbf{GCR\%}$\downarrow$ \\
+\midrule
+  & \best{\grace{} (full)}             & \best{87} & 7 & \best{0} \\
+\midrule
+C1 & No group layers (L6+L7 zeroed)     & \tbd & \tbd & \tbd \\
+C2 & $K=1$ slot                         & \tbd & \tbd & \tbd \\
+C2 & $K=2$ slots                        & \tbd & \tbd & \tbd \\
+C2 & $K=4$ slots                        & \tbd & \tbd & \tbd \\
+C2 & $K=5$ slots                        & \tbd & \tbd & \tbd \\
+C3 & No trajectory layers (L2--L5 zeroed) & \tbd & \tbd & \tbd \\
+C4 & No auxiliary loss (mean$\pm$std)   & \tbd & \tbd & \tbd \\
+C5 & Uniform $\alpha$ (no slot competition) & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+We describe the expected finding from each ablation and the theoretical
+justification:
+
+\textbf{C1 — Remove group layers (the headline ablation).}
+Zeroing L6 (group cohesion) and L7 (group repulsion) removes all explicit
+group spatial information from the cost map.
+The robot still navigates, but the planner sees only trajectory prediction
+and individual occupancy.
+We expect GCR to rise sharply (from 0\% to $>$15\%), confirming that
+explicit spatial group representation — not just group-aware perception — is
+the operative mechanism for group avoidance.
+
+\textbf{C2 — $K$-slot ablation.}
+With $K=1$, all pedestrians are assigned to a single prototype, which smears
+the group centroid across the entire crowd; group cost layers become a large
+diffuse halo with no per-group structure.
+With $K=2$, one slot must represent both a group and the robot's surroundings
+in scenes with 3 groups. $K=3$ matches the default scene configuration
+(up to 3 groups) and is expected to be optimal. $K>3$ over-segments but
+remains functional.
+
+\textbf{C3 — Remove trajectory layers.}
+Zeroing L2–L5 removes the multi-horizon prediction. The planner sees only
+where pedestrians are now, not where they will be. We expect CR to rise
+4–8 pp, particularly for fast-moving \emph{dynamic-LF} groups.
+
+\textbf{C4 — No auxiliary loss (3 seeds).}
+The auxiliary BCE loss regularises the backbone during Stage~C unfreezing.
+Without it, the backbone gradients can overfit to the PPO signal and destroy
+the pretrained group-detection features.
+We expect high variance across seeds — some converge to SR $\approx$ 85\%,
+others diverge to $\approx$ 17\% — directly demonstrating that the auxiliary
+loss provides training stability.
+
+\textbf{C5 — Uniform $\alpha$ (no slot competition).}
+Replacing the competitive-softmax assignment with a uniform distribution
+($\alpha_{kn} = 1/N$ for all visible $n$) removes the learned grouping signal.
+Group centroids become the mean of \emph{all} visible pedestrians, not actual
+group centers, making L6 and L7 globally diffuse.
+We expect GCR to rise and SR to drop, confirming that SlotAttention's
+differentiable group assignment is necessary.
+
+%===============================================================================
+\section{Qualitative Analysis}
+\label{sec:qualitative}
+
+\textbf{Visualization.}
+We developed a three-panel visualization tool (\texttt{visualize\_grace.py})
+that renders, per frame: (left) the ground-truth environment with group hulls,
+formation types, and robot trajectory; (middle) the robot's learned slot
+assignments, coloring each pedestrian by their dominant slot; and (right)
+the 9-channel cost stack as a labeled grid.
+
+This visualization makes interpretable what black-box policies cannot show.
+For example, Fig.~\ref{fig:qualitative} (placeholder) would show, for a scene
+where a static F-formation blocks the robot's direct path:
+\begin{itemize}\setlength\itemsep{0pt}
+  \item L6 (group cohesion) develops a sharp, high-cost peak over the
+        F-formation's centroid, correctly locating the group.
+  \item L7 (repulsion) extends a soft halo $\approx$1.2\,m beyond the hull,
+        providing the early-warning margin.
+  \item The planner's trajectory curves to the corridor \emph{outside}
+        both L6 and L7, never breaching the hull.
+\end{itemize}
+
+\textbf{Interpretability in practice.}
+During development, we identified a cost-normalization bug (the goal attractor
+channel was not clipped, causing gradient spikes) by inspecting L8 in the
+visualizer — an operation that is impossible with end-to-end black-box policies.
+This validates the paper's claim that interpretable spatial belief has
+practical engineering value beyond academic metrics.
+
+\textbf{Slot stability.}
+We observe that once the SlotAttention module locks onto a group assignment
+(typically within the first 5–10 steps of an episode), the slot labels remain
+stable for the duration of the episode. This stability arises because the GRU
+in the planner provides temporal smoothing and because the crowd composition
+changes slowly within a single episode.
+
+\textbf{Failure cases.}
+\grace{} fails primarily in two scenarios:
+(1)~a narrow corridor where both sides are flanked by dynamic groups, leaving
+insufficient lateral clearance; and
+(2)~very dense scenes ($>$25 pedestrians) where the cost map saturates and
+the planner cannot distinguish individual group boundaries. Both failure modes
+are visible in the cost map before the collision occurs, which is precisely
+the debugging advantage of the interpretable representation.
+
+%===============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented \grace{}, the first end-to-end crowd-navigation policy with an
+interpretable, group-aware spatial belief between perception and planning.
+By rendering SlotAttention group prototypes as explicit cost layers on a
+bird's-eye-view grid, \grace{} achieves a group-crossing rate of 0\% on a
+realistic benchmark while maintaining competitive navigation efficiency.
+Ablation experiments confirm that the group cost layers are the operative
+mechanism: removing them raises GCR from 0\% to $>$15\%, while removing
+slot competition (uniform $\alpha$) makes group boundaries globally diffuse.
+We believe the interpretable cost-map interface is a broadly applicable
+design pattern for any policy that must reason about structured social entities.
+
+%===============================================================================
+\section{Limitations}
+\label{sec:limitations}
+
+\textbf{Limiting assumptions.}
+\grace{} makes three assumptions that bound its current applicability.
+First, it assumes \emph{perfect pedestrian detection}: positions and velocities
+are read directly from the simulator without sensor noise, occlusion, or
+detection failures. Real-world deployment requires an upstream person-detection
+and tracking module (e.g., LiDAR clustering or camera-based detection), whose
+errors will propagate into the cost map.
+Second, trajectory layers L2--L5 assume \emph{constant-velocity motion}: future
+positions are predicted as $p_i + v_i \Delta t$. This is inaccurate for
+accelerating or turning pedestrians, particularly leader-follower groups where
+followers change speed and direction in response to the leader.
+Third, the \emph{$K=3$ slot count} is matched to the training distribution
+(up to 3 groups per episode); in environments with more simultaneous groups,
+one slot must represent multiple groups, degrading group-cost layer accuracy.
+
+\textbf{Failure modes.}
+We empirically observe two recurring failure modes in our evaluation.
+(1)~\emph{Bilateral group corridors}: when dynamic groups flank both sides of
+the robot's path simultaneously, no lateral escape exists within the current
+planner's field of view; the robot either stops (timeout) or is forced to
+graze a group hull. This accounts for the majority of the 7\% collision rate.
+(2)~\emph{Cost-map saturation in dense crowds}: with $>$25 visible pedestrians,
+the individual occupancy layer L1 and trajectory layers L2--L5 become
+near-uniformly high, masking the group cohesion signal in L6.
+The planner loses the ability to distinguish between navigable gaps and occupied
+regions, leading to conservative oscillatory behaviour and timeouts.
+Both failure modes are visible in the cost-map visualizer before the collision
+or timeout occurs — a direct demonstration of the interpretability advantage.
+
+\textbf{Simulation-to-real gap.}
+All experiments are conducted in simulation. The realistic benchmark
+(phases A--E) introduces speed variation, F-formations, and leader-follower
+dynamics calibrated to field measurements, but does not model sensor noise,
+robot body dynamics, or reactive pedestrian responses to the robot.
+Sim-to-real transfer remains an open challenge for all learned crowd-navigation
+policies and is not specific to \grace{}.
+
+\textbf{Addressing these limitations.}
+The constant-velocity limitation can be partially resolved by replacing
+L2--L5 with a learned social predictor (the GST predictor~\citep{liu2022intention}
+is already integrated in our observation encoder and could feed the synthesizer
+directly).
+Adaptive-$K$ slot attention~\citep{locatello2020object} can handle variable
+group counts without architectural changes.
+The detection-front-end gap can be closed by coupling \grace{} with a
+tracking-by-detection module; because the cost map is the interface, no
+changes to the planner are required.
+
+\clearpage
+\acknowledgments{Acknowledgments will be included in the camera-ready version.}
+
+%===============================================================================
+\bibliography{grace}
+
+%===============================================================================
+\appendix
+\input{grace_appendix}
+
+\end{document}

@@ -71,24 +71,24 @@ class Config(object):
     # True  = include group slot prototypes in cross-attn kv (Stage 3b+)
     gram_v2.use_slots = False
 
-    # config for GRAM-Map (end-to-end cost-map navigation, rl/networks/gram_map_network.py)
-    # Activate by setting: robot.policy='gram_map', same env flags as gram_v2
-    gram_map = BaseConfig()
-    gram_map.phase2_checkpoint = 'trained_models/gram_v2/phase2_v2/best.pt'
-    gram_map.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
+    # config for GRACE (end-to-end cost-map navigation, rl/networks/grace_network.py)
+    # Activate by setting: robot.policy='grace', same env flags as gram_v2
+    grace = BaseConfig()
+    grace.phase2_checkpoint = 'trained_models/gram_v2/phase2_v2/best.pt'
+    grace.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
     # Freeze backbone during Stage B (initial PPO); unfreeze for Stage C fine-tuning
-    gram_map.freeze_backbone   = False
+    grace.freeze_backbone   = False
     # BEV grid: grid_size × grid_size cells covering 2×grid_range metres square
     # Default 32×32 at 6m → 0.375 m/cell.  Increase to 48 or 64 if VRAM allows.
-    gram_map.grid_size  = 32
-    gram_map.grid_range = 6.0
+    grace.grid_size  = 32
+    grace.grid_range = 6.0
     # Temporal horizons for trajectory cost layers (seconds)
-    gram_map.horizons   = [0.3, 0.7, 1.0, 1.5]
+    grace.horizons   = [0.3, 0.7, 1.0, 1.5]
     # Self-supervised auxiliary occupancy loss
     # Stage B: False (frozen cost map, pure PPO)
     # Stage C: True  (joint PPO + aux loss)
-    gram_map.use_aux_loss    = True
-    gram_map.aux_loss_weight = 0.1      # λ: weight of aux loss relative to PPO loss
+    grace.use_aux_loss    = True
+    grace.aux_loss_weight = 0.1      # λ: weight of aux loss relative to PPO loss
 
     # config for Groups
     group = BaseConfig()
@@ -331,8 +331,8 @@ class Config(object):
     robot.visible = False
     # For baseline: srnn; another method: selfAttn_merge_srnn
     # our method robot.policy = 'selfAttn_merge_srnn'
-    # GARN baseline: 'garn'; GRAM-v2: 'gram_v2'; GRAM-Map: 'gram_map'
-    robot.policy = 'gram_map'
+    # GARN baseline: 'garn'; GRAM-v2: 'gram_v2'; GRACE: 'grace'
+    robot.policy = 'grace'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"

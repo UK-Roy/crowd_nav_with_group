@@ -221,6 +221,7 @@ Every `step()` call runs in this order:
 | `selfAttn_merge_srnn` | `selfAttn_merge_SRNN` | `selfAttn_srnn_temp_node.py` | Intention-aware RL (neural) |
 | `selfAttn_merge_srnn_grpAttn` | `selfAttn_merge_SRNN_GrpAttn` | `selfAttn_srnn_temp_node_groupAttn.py` | GRAM — our model |
 | `garn` | `GARN` | `stgan_model.py` | GARN: STGAN + group reward |
+| `grace` | `GRACE` | `grace_network.py` | GRACE: interpretable group-aware cost-map policy (CoRL submission) |
 | `zone_based` | `ZoneBasedGroupAvoidance` | — | Heuristic group-aware |
 | `f_formation` | `FFormationAvoidance` | — | Heuristic group-aware |
 

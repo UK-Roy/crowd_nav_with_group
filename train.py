@@ -96,9 +96,9 @@ def main():
 	# Inject policy-specific config flags into algo_args so the network can read them
 	if config.robot.policy == 'gram_v2':
 		algo_args.gram_v2_use_slots = config.gram_v2.use_slots
-	if config.robot.policy == 'gram_map':
-		algo_args._gram_map_cfg          = config.gram_map
-		algo_args.gram_map_use_aux_loss  = config.gram_map.use_aux_loss
+	if config.robot.policy == 'grace':
+		algo_args._grace_cfg          = config.grace
+		algo_args.grace_use_aux_loss  = config.grace.use_aux_loss
 
 	actor_critic = Policy(
 		envs.observation_space.spaces, # pass the Dict into policy to parse
@@ -114,7 +114,7 @@ def main():
 							  algo_args.human_node_rnn_size,
 							  algo_args.human_human_edge_rnn_size)
 
-	# Load frozen Phase 2 + Phase 3 backbones (used by both gram_v2 and gram_map)
+	# Load frozen Phase 2 + Phase 3 backbones (used by both gram_v2 and grace)
 	if config.robot.policy == 'gram_v2':
 		actor_critic.base.load_frozen_backbones(
 			detector_path=config.gram_v2.phase2_checkpoint,
@@ -122,12 +122,12 @@ def main():
 			device=device,
 			freeze=config.gram_v2.freeze_backbone,
 		)
-	if config.robot.policy == 'gram_map':
+	if config.robot.policy == 'grace':
 		actor_critic.base.load_frozen_backbones(
-			detector_path=config.gram_map.phase2_checkpoint,
-			slot_path=config.gram_map.phase3_checkpoint,
+			detector_path=config.grace.phase2_checkpoint,
+			slot_path=config.grace.phase3_checkpoint,
 			device=device,
-			freeze=config.gram_map.freeze_backbone,
+			freeze=config.grace.freeze_backbone,
 		)
 
 	# continue training from an existing model if resume = True

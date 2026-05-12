@@ -1,14 +1,14 @@
 from crowd_nav.policy.srnn import SRNN
 
 
-class GRAMMap(SRNN):
+class GRACE(SRNN):
     """
-    Policy class for GRAM-Map (end-to-end cost-map navigation).
-    Network lives in rl/networks/gram_map_network.py.
+    Policy class for GRACE (end-to-end group-aware cost-map navigation).
+    Network lives in rl/networks/grace_network.py.
     predict() is never called during PPO training.
     """
     def __init__(self, config):
         super().__init__(config)
-        self.name = 'gram_map'
+        self.name = 'grace'
         self.trainable = True
         self.multiagent_training = True

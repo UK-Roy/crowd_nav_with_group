@@ -1,5 +1,5 @@
 """
-GRAM-Map Phase 4 — end-to-end group-aware cost-map navigation policy.
+GRACE Phase 4 — end-to-end group-aware cost-map navigation policy.
 
 Pipeline (per timestep):
   1. Build 7-d per-human features from the 2-frame rolling buffer (same as GRAM-v2)
@@ -32,7 +32,7 @@ import torch.nn as nn
 
 from crowd_nav.gram_v2.models import GroupDetector, FEAT_DIM, INPUT_DIM
 from crowd_nav.gram_v2.slot_attention import SlotAttention
-from rl.networks.gram_map_synthesizer import CostMapSynthesizer, OccupancyHead, CostMapPlanner
+from rl.networks.grace_synthesizer import CostMapSynthesizer, OccupancyHead, CostMapPlanner
 
 MAX_HUMANS  = 20
 GRU_HIDDEN  = 256
@@ -58,9 +58,9 @@ def _build_7d_frame(spatial, velocity, mask):
     return frame * mask.unsqueeze(-1).float()
 
 
-class GRAMMapNetwork(nn.Module):
+class GRACENetwork(nn.Module):
     """
-    Full GRAM-Map network.  Matches the Policy interface expected by model.py:
+    Full GRACE network.  Matches the Policy interface expected by model.py:
       __init__(obs_space_dict, args)
       forward(inputs, rnn_hxs, masks, infer=False) → (value, actor_feat, rnn_hxs)
     """
@@ -80,18 +80,29 @@ class GRAMMapNetwork(nn.Module):
         self.human_node_rnn_size       = GRU_HIDDEN
         self.human_human_edge_rnn_size = FEAT_DIM * 2   # 14
 
-        # Grid / cost-map config (read from gram_map config if present)
-        cfg = getattr(args, '_gram_map_cfg', None)
+        # Grid / cost-map config (read from grace config if present)
+        cfg = getattr(args, '_grace_cfg', None)
         grid_size   = getattr(cfg, 'grid_size',  32)  if cfg else 32
         grid_range  = getattr(cfg, 'grid_range', 6.0) if cfg else 6.0
         horizons    = getattr(cfg, 'horizons',   [0.3, 0.7, 1.0, 1.5]) if cfg else [0.3, 0.7, 1.0, 1.5]
         use_aux     = getattr(cfg, 'use_aux_loss', False) if cfg else False
-        self.use_aux_loss  = getattr(args, 'gram_map_use_aux_loss', use_aux)
+        self.use_aux_loss  = getattr(args, 'grace_use_aux_loss', use_aux)
         self.aux_lambda    = getattr(cfg, 'aux_loss_weight', 0.1) if cfg else 0.1
+
+        # ── Ablation flags (default: off — identical behaviour to before) ─────
+        self.ablation_no_group_layers = getattr(args, 'ablation_no_group_layers', False)
+        self.ablation_no_traj_layers  = getattr(args, 'ablation_no_traj_layers',  False)
+        self.ablation_no_aux_loss     = getattr(args, 'ablation_no_aux_loss',     False)
+        self.ablation_uniform_alpha   = getattr(args, 'ablation_uniform_alpha',   False)
+        K_eff = getattr(args, 'ablation_K_slots', None) or K_SLOTS
+        self.K_eff = K_eff
+
+        if self.ablation_no_aux_loss:        # C4 hard-overrides aux loss
+            self.use_aux_loss = False
 
         # ── Perception backbones (same as GRAM-v2) ────────────────────────────
         self.detector  = GroupDetector(input_dim=INPUT_DIM, n_gnn_layers=3)
-        self.slot_attn = SlotAttention(embed_dim=EMBED_DIM, K=K_SLOTS)
+        self.slot_attn = SlotAttention(embed_dim=EMBED_DIM, K=K_eff)
         self._detector_use_pt = False
 
         # ── Cost-map synthesis ────────────────────────────────────────────────
@@ -99,6 +110,8 @@ class GRAMMapNetwork(nn.Module):
             grid_size=grid_size,
             grid_range=grid_range,
             horizons=horizons,
+            disable_group_layers=self.ablation_no_group_layers,
+            disable_traj_layers=self.ablation_no_traj_layers,
         )
         n_cost_ch = self.synthesizer.n_channels
 
@@ -138,6 +151,7 @@ class GRAMMapNetwork(nn.Module):
             )
         self._aux_loss        = None   # set during forward when use_aux_loss=True
         self._last_cost_stack = None   # set during infer=True for visualization
+        self._last_alpha      = None   # (1, K, N) slot→human assignments for visualization
 
     @property
     def recurrent_hidden_state_size(self) -> int:
@@ -168,8 +182,8 @@ class GRAMMapNetwork(nn.Module):
             self.detector.train(); self.slot_attn.train()
 
         mode = "frozen" if freeze else "trainable"
-        print(f"[GRAM-Map] GroupDetector ({mode}) loaded from {detector_path}")
-        print(f"[GRAM-Map] SlotAttention  ({mode}) loaded from {slot_path}")
+        print(f"[GRACE] GroupDetector ({mode}) loaded from {detector_path}")
+        print(f"[GRACE] SlotAttention  ({mode}) loaded from {slot_path}")
 
     # ------------------------------------------------------------------
 
@@ -247,6 +261,15 @@ class GRAMMapNetwork(nn.Module):
             g     = g.nan_to_num(0.0)                             # guard: GD NaN on first unfreeze
             _, alpha = self.slot_attn(g, vmask_flat)              # (TB,K,64),(TB,K,N)
         alpha = alpha.nan_to_num(0.0)                             # guard: SA NaN on first unfreeze
+
+        # ── Ablation C5: replace alpha with uniform distribution over visible humans ──
+        if self.ablation_uniform_alpha:
+            vmask_f = vmask_flat.float()                                   # (TB, N)
+            vis_n   = vmask_f.sum(dim=-1, keepdim=True).clamp(min=1.0)     # (TB, 1)
+            uniform = (vmask_f / vis_n).unsqueeze(1)                       # (TB, 1, N)
+            alpha   = uniform.expand(-1, self.K_eff, -1).contiguous()      # (TB, K, N)
+        if infer:
+            self._last_alpha = alpha.detach().cpu()               # (TB, K, N) for visualization
 
         # ── Cost-map synthesis ────────────────────────────────────────────────
         p_flat    = p_all.reshape(TB, N_actual, 2)

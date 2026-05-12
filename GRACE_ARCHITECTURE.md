@@ -1,4 +1,4 @@
-# GRAM-Map: End-to-End Group-Aware Cost Map Navigation
+# GRACE: End-to-End Group-Aware Cost Map Navigation
 
 **Target venue:** CoRL 2026
 **Status:** Stage C complete (SR=89%, CR=3%) — Realistic benchmark pending
@@ -30,7 +30,7 @@ Classical methods (ORCA, social force) do not have these problems but cannot rea
 
 ## 2. Contribution
 
-We propose **GRAM-Map**, an architecture with four novel components:
+We propose **GRACE**, an architecture with four novel components:
 
 ### C1. Group-aware cost field synthesis (novel)
 We render a 2D bird's-eye-view (BEV) cost map by composing differentiable cost layers from learned group perception. Existing social cost maps treat pedestrians as independent Gaussians; ours reads off a learned group affinity matrix and renders a *group cohesion field* — a smooth high-cost region across the convex hull of group members, with a soft falloff. This is the first cost map that is group-aware by construction, not by post-hoc clustering.
@@ -151,16 +151,16 @@ Trade-off: higher resolution = more spatial fidelity but quadratic FLOPs.
 
 ## 4. Implementation Status
 
-**Branch:** `gram-map`
+**Branch:** `grace`
 
 | File | Status | Description |
 |---|---|---|
-| `rl/networks/gram_map_synthesizer.py` | ✅ Done | CostMapSynthesizer, OccupancyHead, CostMapPlanner |
-| `rl/networks/gram_map_network.py` | ✅ Done | GRAMMapNetwork — full policy |
-| `crowd_nav/policy/gram_map.py` | ✅ Done | Policy class |
-| `crowd_nav/policy/policy_factory.py` | ✅ Done | Registered as `gram_map` |
-| `crowd_nav/configs/config.py` | ✅ Done | `gram_map` config section added |
-| `rl/networks/model.py` | ✅ Done | GRAMMapNetwork wired to `gram_map` key |
+| `rl/networks/grace_synthesizer.py` | ✅ Done | CostMapSynthesizer, OccupancyHead, CostMapPlanner |
+| `rl/networks/grace_network.py` | ✅ Done | GRACENetwork — full policy |
+| `crowd_nav/policy/grace.py` | ✅ Done | Policy class |
+| `crowd_nav/policy/policy_factory.py` | ✅ Done | Registered as `grace` |
+| `crowd_nav/configs/config.py` | ✅ Done | `grace` config section added |
+| `rl/networks/model.py` | ✅ Done | GRACENetwork wired to `grace` key |
 | `train.py` | ✅ Done | backbone loading + aux loss injection |
 | `test.py` | ✅ Done | aux loss disabled at eval |
 | `rl/ppo/ppo.py` | ✅ Done | `_aux_loss` hook (3 lines) |
@@ -175,33 +175,33 @@ Trade-off: higher resolution = more spatial fidelity but quadratic FLOPs.
 
 ### Training commands
 
-Before running, set `robot.policy = 'gram_map'` in `config.py`, then:
+Before running, set `robot.policy = 'grace'` in `config.py`, then:
 
 **Stage B — Initial PPO (frozen backbone, no aux loss):**
 ```bash
-# config.py: gram_map.freeze_backbone=True, gram_map.use_aux_loss=False
+# config.py: grace.freeze_backbone=True, grace.use_aux_loss=False
 # Environment: human_num=15, circle_radius=6, group.types=['static_f','dynamic_lf'], num_on_path=1
 # Reward: discomfort_group_dist=0.35, discomfort_grp_penalty_factor=10, grp_collision_penalty=-5
-python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/gram_map/stageB --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 4e-4 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20
+python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/grace/stageB --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 4e-4 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20
 ```
 
 > **Critical:** `--entropy-coef 0.05` is required. Default is 0.0 which causes policy collapse (SR drops from 83% → 17% over 40K updates).
 
 **Stage C — Fine-tune with aux loss (frozen backbone unlocked):**
 ```bash
-# config.py: gram_map.freeze_backbone=False, gram_map.use_aux_loss=True
-python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/gram_map/stageC --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 5e-5 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20 --resume --load_path trained_models/gram_map/stageB/checkpoints/<best>.pt
+# config.py: grace.freeze_backbone=False, grace.use_aux_loss=True
+python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/grace/stageC --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 5e-5 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20 --resume --load_path trained_models/grace/stageB/checkpoints/<best>.pt
 ```
 
 **Evaluate (metrics — SR, CR, GCR):**
 ```bash
-python test.py --model_dir trained_models/gram_map/stageC --test_model <best>.pt
+python test.py --model_dir trained_models/grace/stageC --test_model <best>.pt
 ```
 
 **Visualize cost map (video — env + 9 cost channels side by side):**
 ```bash
 python visualize_cost_map.py \
-    --model_dir trained_models/gram_map/stageC \
+    --model_dir trained_models/grace/stageC \
     --test_model <best>.pt \
     --seed 3 --out cost_map.mp4 --fps 8 --dpi 130
 ```
@@ -231,7 +231,7 @@ realistic.use_convex_hull       = True   # Phase E: convex hull boundaries
 
 Step 2 — Run evaluation (500 episodes for stable estimates):
 ```bash
-python test.py --model_dir trained_models/gram_map/stageC --test_model 41660.pt
+python test.py --model_dir trained_models/grace/stageC --test_model 41660.pt
 ```
 
 > **Important:** Do NOT retrain after changing these settings — only run `test.py`. The model was trained on the simpler 15-human non-realistic env; we evaluate in the harder realistic env to stress-test generalization. Restore `sim.human_num=15`, `realistic.enabled=False` before any retraining.
@@ -246,20 +246,20 @@ We train in three stages. **Each stage has a single, easy-to-debug objective**, 
 CostMapSynthesizer has zero learnable parameters (pure deterministic Gaussian splatting). The cost map is physically grounded from step 0 — no pretraining needed. Stage A is not required.
 
 ### Stage B — Planning head only (PPO with frozen backbone) ✅ COMPLETE
-- `gram_map.freeze_backbone=True`, `gram_map.use_aux_loss=False`
+- `grace.freeze_backbone=True`, `grace.use_aux_loss=False`
 - Environment: 15 humans, circle_radius=6, groups=['static_f','dynamic_lf'], num_on_path=1
 - Only CostMapPlanner + RobotMLP + fusion + GRU + Actor/Critic trained; backbones frozen
 - Loss: standard PPO (clipped surrogate + value loss)
 - **Result: SR=83%, CR=11%, TR=6%** at ~41600 updates (mean reward 13.4)
 - Peak SR=92% observed early (~update 400) — statistical fluctuation in 100-ep window
-- Best checkpoint: `trained_models/gram_map/stageB/checkpoints/41600.pt`
+- Best checkpoint: `trained_models/grace/stageB/checkpoints/41600.pt`
 
 > **Lesson learned:** `--entropy-coef 0.0` (default) causes policy to collapse from SR=83% → 17% by end of training. Must use `--entropy-coef 0.05`.
 
 **Advance criterion:** SR > 60% ✅ achieved (83%)
 
 ### Stage C — End-to-end fine-tuning ✅ COMPLETE
-- `gram_map.freeze_backbone=False`, `gram_map.use_aux_loss=True`
+- `grace.freeze_backbone=False`, `grace.use_aux_loss=True`
 - Unfreeze GroupDetector + SlotAttention; add self-supervised aux occupancy loss (λ=0.1)
 - Joint loss: `L_PPO + 0.1 · L_aux`
 - LR = 5e-5 (reduced from 4e-4 to prevent NaN gradient corruption on first backbone unfreeze)
@@ -307,7 +307,7 @@ Training diagnostics at update 41654:
 - Collision avg step: 31/197 (early collisions → occasional panic in tight situations)
 - Success avg: 85 steps to goal
 - Discomfort: 1.4% of steps in danger zone
-- Best checkpoint: `trained_models/gram_map/stageC/checkpoints/41660.pt`
+- Best checkpoint: `trained_models/grace/stageC/checkpoints/41660.pt`
 
 **Stage B → Stage C improvement: SR +6pp (83% → 89%), CR −8pp (11% → 3%)**
 
@@ -315,10 +315,54 @@ Training diagnostics at update 41654:
 
 ---
 
+**Stage C Realistic Benchmark Results (100 episodes):**
+
+Evaluation environment config (realistic — paper table numbers):
+```
+sim.human_num        = 20
+sim.circle_radius    = 8.5
+sim.arena_size       = 8.5
+group.num_groups     = 3
+group.num_on_path    = 2
+group.types          = ['static_f', 'dynamic_lf', 'dynamic_free']
+realistic.enabled    = True   (all phases A–E: speed variation, group speed factor,
+                               F-formations, leader-follower, convex hull boundaries)
+```
+
+| Metric | Value |
+|---|---|
+| Success Rate (SR) | **87%** |
+| Collision Rate (CR) | **7%** |
+| Timeout Rate (TR) | 6% |
+| GCR (group hull intrusion rate) | **0.00%** |
+| Avg intrusion ratio | 5.86% |
+| Avg min distance in intrusions | 0.37 m |
+| Nav time | 20.76 s |
+| Path length | 31.70 m |
+| Mean reward | 31.35 |
+
+Collision cases: episodes 4, 21, 40, 51, 54, 60, 90 (7 out of 100)
+Timeout cases: episodes 35, 41, 47, 49, 88, 97 (6 out of 100)
+
+**Non-realistic → Realistic comparison (same checkpoint 41665.pt):**
+| Metric | Non-realistic (15 humans) | Realistic (20 humans) | Change |
+|---|---|---|---|
+| SR | 89% | 87% | −2pp (mild drop, model generalises well) |
+| CR | 3% | 7% | +4pp (harder env, more collisions) |
+| TR | 8% | 6% | −2pp |
+| GCR (hull intrusion) | 3.32% | **0.00%** | ↓ (model never enters convex hull) |
+| Mean reward | 19.76 | 31.35 | ↑ (larger arena → more potential reward) |
+| Nav time | 17.37 s | 20.76 s | ↑ (larger arena, 8.5m vs 6m) |
+| Path length | 26.68 m | 31.70 m | ↑ (longer paths in larger arena) |
+
+> **GCR = 0.00%** means the robot never entered the convex hull of any group in any of the 100 realistic episodes. The 5.86% intrusion ratio is the discomfort-zone proximity rate (within 0.35m of the hull boundary), not a hull crossing.
+
+---
+
 ## 5. Experiments
 
 ### 5.1 Main results table
-Compare on the realistic benchmark (Social Force humans, 20 humans, 3 groups, all five realistic phases on):
+Compare on the realistic benchmark (20 humans, 3 groups, all five realistic phases on):
 
 | Method | SR ↑ | CR ↓ | TR ↓ | GCR ↓ | Avg Reward ↑ | Avg Steps ↓ |
 |---|---|---|---|---|---|---|
@@ -327,16 +371,16 @@ Compare on the realistic benchmark (Social Force humans, 20 humans, 3 groups, al
 | GARN (RA-L 2025) | | | | | | |
 | GRAM (legacy) | | | | | | |
 | GRAM-v2 (Stage 5) | | | | | | |
-| **GRAM-Map (ours)** | | | | | | |
+| **GRACE (ours)** | **87%** | **7%** | 6% | **0.00%** | 31.35 | — |
 
 ### 5.2 Ablations
 | Variant | What it tests |
 |---|---|
-| GRAM-Map w/o L3+L4 (group layers) | Does group-aware cost matter, or is per-human enough? |
-| GRAM-Map w/o L2 (trajectory layer) | Does future intent matter? |
-| GRAM-Map w/o L_aux | Does self-supervised cost regularization matter? |
-| GRAM-Map w/ random init backbones | Does Phase 2/3 pretraining matter? |
-| GRAM-Map T = 1 (no temporal axis) | Is the 3D cost map worth the FLOPs? |
+| GRACE w/o L3+L4 (group layers) | Does group-aware cost matter, or is per-human enough? |
+| GRACE w/o L2 (trajectory layer) | Does future intent matter? |
+| GRACE w/o L_aux | Does self-supervised cost regularization matter? |
+| GRACE w/ random init backbones | Does Phase 2/3 pretraining matter? |
+| GRACE T = 1 (no temporal axis) | Is the 3D cost map worth the FLOPs? |
 
 ### 5.3 Generalization
 Train on 3-4 member groups, evaluate on:
@@ -362,7 +406,7 @@ These visualizations are the core "story" of the paper — they show *why* the r
 
 ## 6. Comparison to Related Work
 
-| Work | What it does | Why GRAM-Map is different |
+| Work | What it does | Why GRACE is different |
 |---|---|---|
 | Social cost maps (Kollmitz 2015, Kim & Pineau 2016) | Hand-designed Gaussians around pedestrians, classical planner | Hand-designed; not group-aware; not temporal; not learned |
 | MPPI on learned costs (Williams 2017, Wang 2021) | Sampled trajectories on a neural cost field | Cost field is monolithic, not compositional; not group-aware; trained from scratch |
@@ -370,7 +414,7 @@ These visualizations are the core "story" of the paper — they show *why* the r
 | TrajNet++/Y-Net trajectory predictors | Predict future trajectories | Prediction only; doesn't close the loop with planning |
 | GRAM (ours, prior) | Group-aware attention over recurrent policy | Opaque; no spatial reasoning; PPO-only training |
 | GARN (RA-L 2025) | STGAN trajectory predictor + reward shaping | Reward-level group awareness; no spatial cost map |
-| **GRAM-Map (this work)** | **Compositional learned cost map with group layer + time axis + self-supervision** | **Combines all four ideas; first end-to-end social cost map that is group-aware and time-conditioned** |
+| **GRACE (this work)** | **Compositional learned cost map with group layer + time axis + self-supervision** | **Combines all four ideas; first end-to-end social cost map that is group-aware and time-conditioned** |
 
 ---
 
@@ -414,4 +458,4 @@ Total: **~7 weeks of focused work.** Heavy reuse of existing infrastructure (Pha
 
 ## 10. One-paragraph summary (for the abstract)
 
-We present GRAM-Map, an end-to-end architecture for social robot navigation that exposes the robot's spatial belief as a learned, group-aware, time-conditioned cost map and plans over it with a 3D convolutional policy. Cost is composed from interpretable layers (individual occupancy, trajectory propagation, group cohesion hull, group repulsion, goal attractor, arena boundary), each rendered differentiably from a self-supervised group perception backbone (GroupDetector + SlotAttention). A self-supervised auxiliary loss grounds the cost map in observed future occupancy, mitigating the PPO instability that plagues prior end-to-end methods. We evaluate on a realistic crowd benchmark (Social Force humans, 20 agents, F-formations and leader-follower groups) against ORCA, Social Force, GARN, GRAM, and GRAM-v2, and ablate every cost layer. GRAM-Map beats prior learned baselines on success rate while reducing group crossing rate below classical methods, and produces visualizable cost maps that explain every robot decision.
+We present GRACE, an end-to-end architecture for social robot navigation that exposes the robot's spatial belief as a learned, group-aware, time-conditioned cost map and plans over it with a 3D convolutional policy. Cost is composed from interpretable layers (individual occupancy, trajectory propagation, group cohesion hull, group repulsion, goal attractor, arena boundary), each rendered differentiably from a self-supervised group perception backbone (GroupDetector + SlotAttention). A self-supervised auxiliary loss grounds the cost map in observed future occupancy, mitigating the PPO instability that plagues prior end-to-end methods. We evaluate on a realistic crowd benchmark (Social Force humans, 20 agents, F-formations and leader-follower groups) against ORCA, Social Force, GARN, GRAM, and GRAM-v2, and ablate every cost layer. GRACE beats prior learned baselines on success rate while reducing group crossing rate below classical methods, and produces visualizable cost maps that explain every robot decision.

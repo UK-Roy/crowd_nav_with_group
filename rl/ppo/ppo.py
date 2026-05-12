@@ -81,7 +81,7 @@ class PPO():
 
                 self.optimizer.zero_grad()
                 total_loss = value_loss * self.value_loss_coef + action_loss - dist_entropy * self.entropy_coef
-                # GRAM-Map self-supervised auxiliary loss (stored by GRAMMapNetwork.forward)
+                # GRACE self-supervised auxiliary loss (stored by GRACENetwork.forward)
                 aux = getattr(getattr(self.actor_critic, 'base', None), '_aux_loss', None)
                 if aux is not None:
                     total_loss = total_loss + aux

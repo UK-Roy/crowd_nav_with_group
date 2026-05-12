@@ -167,9 +167,9 @@ def main():
 		# Inject policy-specific config flags so the loaded network is configured correctly
 		if config.robot.policy == 'gram_v2':
 			algo_args.gram_v2_use_slots = config.gram_v2.use_slots
-		if config.robot.policy == 'gram_map':
-			algo_args._gram_map_cfg         = config.gram_map
-			algo_args.gram_map_use_aux_loss = False   # never compute aux loss during eval
+		if config.robot.policy == 'grace':
+			algo_args._grace_cfg         = config.grace
+			algo_args.grace_use_aux_loss = False   # never compute aux loss during eval
 		# load the policy weights
 		actor_critic = Policy(
 			envs.observation_space.spaces,

@@ -1,5 +1,5 @@
 """
-visualize_cost_map.py — Render GRAM-Map cost layers alongside the live environment.
+visualize_cost_map.py — Render GRACE cost layers alongside the live environment.
 
 Produces a side-by-side video:
   Left  : bird's-eye environment (robot, humans, group hulls)
@@ -38,6 +38,8 @@ parser.add_argument('--out',        type=str, default='cost_map.mp4')
 parser.add_argument('--fps',        type=int, default=8)
 parser.add_argument('--dpi',        type=int, default=130)
 parser.add_argument('--max-steps',  type=int, default=200)
+parser.add_argument('--device',     type=str, default='auto',
+                    help='Device to run on: "auto" (default), "cuda", "cpu", or "cuda:0"')
 args = parser.parse_args()
 
 # ── Load config from model directory ─────────────────────────────────────────
@@ -59,17 +61,35 @@ config = env_config = Config()
 config.sim.render      = False
 config.env.use_wrapper = False
 
-if config.robot.policy == 'gram_map':
-    algo_args._gram_map_cfg         = config.gram_map
-    algo_args.gram_map_use_aux_loss = False
+# Force training env settings for visualization.
+# The model dir config may have been updated for realistic benchmark evaluation
+# (human_num=20, realistic.enabled=True) — revert to what the model was trained on.
+config.sim.human_num     = 15
+config.sim.circle_radius = 6.0
+config.sim.arena_size    = 6.0
+config.group.num_groups  = 2
+config.group.num_on_path = 1
+config.group.types       = ['static_f', 'dynamic_lf']
+_r = getattr(config, 'realistic', None)
+if _r is not None:
+    _r.enabled = False
+
+if config.robot.policy == 'grace':
+    algo_args._grace_cfg         = config.grace
+    algo_args.grace_use_aux_loss = False
 
 torch.manual_seed(args.seed)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if args.device == 'auto':
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+else:
+    device = torch.device(args.device)
+print(f"[GRACE] Running on device: {device}"
+      + (" (GPU)" if device.type == 'cuda' else " (CPU)"))
 
 env_name_file = os.path.join(model_dir, 'env_name.txt')
 env_name = open(env_name_file).read().strip() if os.path.exists(env_name_file) else 'CrowdSimVarNum-v0'
 
-GRID_RANGE = getattr(config.gram_map, 'grid_range', 6.0)
+GRID_RANGE = getattr(config.grace, 'grid_range', 6.0)
 
 # ── Build env and policy ──────────────────────────────────────────────────────
 envs = make_vec_envs(env_name, args.seed, 1, algo_args.gamma, None, device,
@@ -89,7 +109,7 @@ actor_critic.to(device).eval()
 # checkpoint via load_state_dict above — no separate backbone load needed.
 # Calling load_frozen_backbones here would overwrite fine-tuned Stage C weights
 # with the original Phase 2/3 checkpoint, which is wrong for evaluation.
-if config.robot.policy == 'gram_map':
+if config.robot.policy == 'grace':
     for p in actor_critic.base.detector.parameters():
         p.requires_grad_(False)
     for p in actor_critic.base.slot_attn.parameters():
@@ -97,11 +117,15 @@ if config.robot.policy == 'gram_map':
     actor_critic.base.detector.eval()
     actor_critic.base.slot_attn.eval()
 
-# ── Initial hidden states (match evaluation.py: edge_num = human_num + 1) ────
+# ── Initial hidden states ────────────────────────────────────────────────────
+# Use the network's own size attributes, not algo_args — the CLI defaults for
+# human_node_rnn_size (128) and human_human_edge_rnn_size (256) differ from
+# the training values (256 and 14). The network knows the right sizes.
 rnn_hxs = {
-    'human_node_rnn':       torch.zeros(1, 1, algo_args.human_node_rnn_size, device=device),
+    'human_node_rnn':       torch.zeros(1, 1,
+                                        actor_critic.base.human_node_rnn_size, device=device),
     'human_human_edge_rnn': torch.zeros(1, actor_critic.base.human_num + 1,
-                                        algo_args.human_human_edge_rnn_size, device=device),
+                                        actor_critic.base.human_human_edge_rnn_size, device=device),
 }
 masks = torch.zeros(1, 1, device=device)
 
@@ -184,7 +208,7 @@ obs   = envs.reset()
 masks = torch.zeros(1, 1, device=device)
 
 writer = FFMpegWriter(fps=args.fps,
-                      metadata={'title': 'GRAM-Map cost map', 'artist': 'GRAM-Map'})
+                      metadata={'title': 'GRACE cost map', 'artist': 'GRACE'})
 
 print(f"Recording to {args.out} ...")
 step = 0
@@ -207,7 +231,7 @@ with writer.saving(fig, args.out, dpi=args.dpi):
         if cost_map is not None:
             _draw_env(ax_env, obs_current, GRID_RANGE)   # draw same frame as cost map
             _draw_cost_channels(cost_map)
-            fig.suptitle('GRAM-Map: Environment vs Cost Stack', fontsize=9, y=1.01)
+            fig.suptitle('GRACE: Environment vs Cost Stack', fontsize=9, y=1.01)
             writer.grab_frame()
 
         if done[0]:

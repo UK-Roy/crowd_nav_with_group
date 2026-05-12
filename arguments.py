@@ -225,6 +225,19 @@ def get_args():
     parser.add_argument('--garn_node_feat_dim', type=int, default=32,
                         help='Per-node feature dimension after initial embedding')
 
+    # ── GRAM-Map ablation flags (CoRL paper experiments) ─────────────────────
+    # All default to off — existing training/testing/visualisation is unaffected.
+    parser.add_argument('--ablation_no_group_layers', action='store_true',
+                        help='GRAM-Map ablation C1: zero out L5+L6 (group cohesion + repulsion).')
+    parser.add_argument('--ablation_no_traj_layers', action='store_true',
+                        help='GRAM-Map ablation C3: zero out L2-L5 (trajectory horizons).')
+    parser.add_argument('--ablation_no_aux_loss', action='store_true',
+                        help='GRAM-Map ablation C4: disable self-supervised occupancy loss.')
+    parser.add_argument('--ablation_uniform_alpha', action='store_true',
+                        help='GRAM-Map ablation C5: replace SlotAttention output with uniform alpha.')
+    parser.add_argument('--ablation_K_slots', type=int, default=None,
+                        help='GRAM-Map ablation C2: override K_SLOTS (default: use built-in K=3).')
+
     args, _ = parser.parse_known_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()

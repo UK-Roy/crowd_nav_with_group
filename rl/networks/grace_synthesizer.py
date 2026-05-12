@@ -1,5 +1,5 @@
 """
-GRAM-Map cost-map synthesis and planning components.
+GRACE cost-map synthesis and planning components.
 
 CostMapSynthesizer  — renders a (B, C, H, W) spatial cost stack from perception outputs.
 OccupancyHead       — predicts future occupancy for the self-supervised auxiliary loss.
@@ -31,7 +31,9 @@ class CostMapSynthesizer(nn.Module):
                  horizons=(0.3, 0.7, 1.0, 1.5),
                  sigma_indiv: float = 0.5,
                  sigma_traj_base: float = 0.5,
-                 sigma_group_scale: float = 1.2):
+                 sigma_group_scale: float = 1.2,
+                 disable_group_layers: bool = False,
+                 disable_traj_layers: bool  = False):
         super().__init__()
         self.grid_size        = grid_size
         self.grid_range       = grid_range
@@ -39,6 +41,10 @@ class CostMapSynthesizer(nn.Module):
         self.sigma_indiv      = sigma_indiv
         self.sigma_traj_base  = sigma_traj_base
         self.sigma_group_scale = sigma_group_scale
+        # Ablation toggles — when True, the corresponding channels are filled with zeros.
+        # Channel count stays constant so the CNN planner does not change shape.
+        self.disable_group_layers = disable_group_layers
+        self.disable_traj_layers  = disable_traj_layers
 
         # Pre-compute fixed grid coordinates — registered as buffer (moves with .to(device))
         lin  = torch.linspace(-grid_range, grid_range, grid_size)
@@ -96,29 +102,39 @@ class CostMapSynthesizer(nn.Module):
 
         # ── L2: Trajectory layers — one per horizon ───────────────────────────
         for i, dt in enumerate(self.horizons):
+            if self.disable_traj_layers:
+                layers.append(torch.zeros(B, 1, self.grid_size, self.grid_size,
+                                          device=p_cur.device, dtype=p_cur.dtype))
+                continue
             sigma_t = self.sigma_traj_base * (1.0 + i * 0.3)   # grows with horizon
             future  = p_cur + v_cur * dt                        # (B, N, 2)
             layers.append(self._splat(future, mask_f, sigma_t).unsqueeze(1))
 
         # ── L3: Group cohesion (soft centroid-based hull per slot) ────────────
-        alpha_n   = alpha / (alpha.sum(-1, keepdim=True) + 1e-8)  # (B,K,N)
-        centroid  = torch.bmm(alpha_n, p_cur)                      # (B,K,2)
+        if self.disable_group_layers:
+            zero_lyr = torch.zeros(B, 1, self.grid_size, self.grid_size,
+                                   device=p_cur.device, dtype=p_cur.dtype)
+            layers.append(zero_lyr)              # L3 zeroed
+            layers.append(zero_lyr.clone())      # L4 zeroed
+        else:
+            alpha_n   = alpha / (alpha.sum(-1, keepdim=True) + 1e-8)  # (B,K,N)
+            centroid  = torch.bmm(alpha_n, p_cur)                      # (B,K,2)
 
-        diff_sq_k = ((p_cur.unsqueeze(1) - centroid.unsqueeze(2)) ** 2).sum(-1)  # (B,K,N)
-        spread    = (alpha_n * diff_sq_k).sum(-1, keepdim=True).sqrt().clamp(min=0.4)  # (B,K,1)
-        sigma_g   = (spread * self.sigma_group_scale).unsqueeze(-1)  # (B,K,1,1)
+            diff_sq_k = ((p_cur.unsqueeze(1) - centroid.unsqueeze(2)) ** 2).sum(-1)  # (B,K,N)
+            spread    = (alpha_n * diff_sq_k).sum(-1, keepdim=True).sqrt().clamp(min=0.4)  # (B,K,1)
+            sigma_g   = (spread * self.sigma_group_scale).unsqueeze(-1)  # (B,K,1,1)
 
-        # (B, K, H, W, 2) centroid splat
-        diff_grp   = self.grid[None, None] - centroid[:, :, None, None]  # (B,K,H,W,2)
-        dsq_grp    = (diff_grp ** 2).sum(-1)                              # (B,K,H,W)
-        grp_gauss  = torch.exp(-dsq_grp / (2 * sigma_g ** 2))            # (B,K,H,W)
-        group_lyr  = grp_gauss.max(1).values.clamp(0, 1).unsqueeze(1)    # (B,1,H,W)
-        layers.append(group_lyr)
+            # (B, K, H, W, 2) centroid splat
+            diff_grp   = self.grid[None, None] - centroid[:, :, None, None]  # (B,K,H,W,2)
+            dsq_grp    = (diff_grp ** 2).sum(-1)                              # (B,K,H,W)
+            grp_gauss  = torch.exp(-dsq_grp / (2 * sigma_g ** 2))            # (B,K,H,W)
+            group_lyr  = grp_gauss.max(1).values.clamp(0, 1).unsqueeze(1)    # (B,1,H,W)
+            layers.append(group_lyr)
 
-        # ── L4: Group repulsion halo (wider sigma — early-warning zone) ───────
-        repulsion  = torch.exp(-dsq_grp / (2 * (sigma_g * 2.0) ** 2))
-        repulsion_lyr = repulsion.max(1).values.clamp(0, 1).unsqueeze(1)
-        layers.append(repulsion_lyr)
+            # ── L4: Group repulsion halo (wider sigma — early-warning zone) ───
+            repulsion  = torch.exp(-dsq_grp / (2 * (sigma_g * 2.0) ** 2))
+            repulsion_lyr = repulsion.max(1).values.clamp(0, 1).unsqueeze(1)
+            layers.append(repulsion_lyr)
 
         # ── L5: Goal attractor — high cost far from goal ──────────────────────
         diff_goal  = self.grid[None] - goal[:, None, None]             # (B,H,W,2)
