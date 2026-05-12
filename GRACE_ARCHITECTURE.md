@@ -185,7 +185,7 @@ Before running, set `robot.policy = 'grace'` in `config.py`, then:
 python train.py --env-name CrowdSimVarNum-v0 --human_node_rnn_size 256 --human_human_edge_rnn_size 14 --output_dir trained_models/grace/stageB --num-env-steps 20000000 --num-processes 16 --num-steps 30 --num-mini-batch 2 --ppo-epoch 5 --lr 4e-4 --eps 1e-5 --gamma 0.99 --gae-lambda 0.95 --entropy-coef 0.05 --value-loss-coef 0.5 --clip-param 0.2 --max-grad-norm 0.5 --use-linear-lr-decay --save-interval 200 --log-interval 20
 ```
 
-> **Critical:** `--entropy-coef 0.05` is required. Default is 0.0 which causes policy collapse (SR drops from 83% → 17% over 40K updates).
+> **Note (2026-05-12):** `distributions.py` now has a logstd clamp [-3.0, 0.5] and the `FixedNormal.entropy()` typo is fixed (was `entrop()`). These two fixes prevent both entropy collapse and entropy runaway. For new training runs, `--entropy-coef 0.005` is recommended. The old `0.05` value caused logstd runaway (σ → 1082) because the entropy bonus was never countered — but test-time SR was unaffected since test uses deterministic (mean) actions.
 
 **Stage C — Fine-tune with aux loss (frozen backbone unlocked):**
 ```bash
@@ -254,7 +254,7 @@ CostMapSynthesizer has zero learnable parameters (pure deterministic Gaussian sp
 - Peak SR=92% observed early (~update 400) — statistical fluctuation in 100-ep window
 - Best checkpoint: `trained_models/grace/stageB/checkpoints/41600.pt`
 
-> **Lesson learned:** `--entropy-coef 0.0` (default) causes policy to collapse from SR=83% → 17% by end of training. Must use `--entropy-coef 0.05`.
+> **Superseded (2026-05-12):** The original lesson (`entropy-coef 0.05` required) is no longer valid after the entropy fixes. `distributions.py` now has logstd clamped to [-3.0, 0.5] which prevents collapse without a large entropy coef. Use `--entropy-coef 0.005` for future training.
 
 **Advance criterion:** SR > 60% ✅ achieved (83%)
 
@@ -536,52 +536,55 @@ Ablations are run on `gram-map` first. Once confirmed, add results to the paper 
 
 **Phase 1 — Train ablations on `gram-map`**
 
-Make sure you are on `gram-map` and Stage B checkpoint exists:
+Make sure you are on `gram-map`. Both checkpoints now exist:
 ```
-trained_models/gram_map/stageB/checkpoints/best.pt
+trained_models/gram_map/stageB/checkpoints/best.pt  ← update 35600, reward 19.74
+trained_models/gram_map/stageC/checkpoints/best.pt  ← update 41000, reward 20.36 (SR=92%)
 ```
 
-Run each ablation (each takes ~1 GPU-day). You can run them one after another or in parallel on different GPUs:
+**Note on entropy (2026-05-12 fix):** `distributions.py` now has a logstd clamp [-3.0, 0.5] and the `FixedNormal.entropy()` typo is fixed. Use `--entropy-coef 0.005` (NOT 0.05) for all ablation runs. The clamp prevents both collapse and runaway.
+
+Run each ablation (each takes ~1 GPU-day). Resume from stageC/best.pt:
 
 ```bash
 # C1 — does group cost map matter?
 python train.py --env-name CrowdSimVarNum-v0 \
     --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
     --output_dir trained_models/gram_map/ablation_C1_no_group \
-    --lr 5e-5 --use-linear-lr-decay \
-    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --lr 5e-5 --entropy-coef 0.005 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageC/checkpoints/best.pt \
     --ablation_no_group_layers
 
 # C2 — does having 3 slots (vs 1) matter?
 python train.py --env-name CrowdSimVarNum-v0 \
     --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
     --output_dir trained_models/gram_map/ablation_C2_K1 \
-    --lr 5e-5 --use-linear-lr-decay \
-    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --lr 5e-5 --entropy-coef 0.005 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageC/checkpoints/best.pt \
     --ablation_K_slots 1
 
 # C3 — do trajectory prediction channels matter?
 python train.py --env-name CrowdSimVarNum-v0 \
     --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
     --output_dir trained_models/gram_map/ablation_C3_no_traj \
-    --lr 5e-5 --use-linear-lr-decay \
-    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --lr 5e-5 --entropy-coef 0.005 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageC/checkpoints/best.pt \
     --ablation_no_traj_layers
 
 # C4 — does auxiliary loss matter?
 python train.py --env-name CrowdSimVarNum-v0 \
     --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
     --output_dir trained_models/gram_map/ablation_C4_no_aux \
-    --lr 5e-5 --use-linear-lr-decay \
-    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --lr 5e-5 --entropy-coef 0.005 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageC/checkpoints/best.pt \
     --ablation_no_aux_loss
 
 # C5 — does learned slot assignment (vs uniform) matter?
 python train.py --env-name CrowdSimVarNum-v0 \
     --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
     --output_dir trained_models/gram_map/ablation_C5_uniform \
-    --lr 5e-5 --use-linear-lr-decay \
-    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --lr 5e-5 --entropy-coef 0.005 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageC/checkpoints/best.pt \
     --ablation_uniform_alpha
 ```
 
