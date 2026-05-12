@@ -28,3 +28,4 @@ policy_factory['hybrid_orca_flocking'] = HYBRID_ORCA_FLOCKING
 policy_factory['garn'] = GARN
 policy_factory['gram_v2'] = GRAMV2
 policy_factory['grace'] = GRACE
+policy_factory['gram_map'] = GRACE   # backward-compat alias for stageA/B/C checkpoints

@@ -167,8 +167,10 @@ def main():
 		# Inject policy-specific config flags so the loaded network is configured correctly
 		if config.robot.policy == 'gram_v2':
 			algo_args.gram_v2_use_slots = config.gram_v2.use_slots
-		if config.robot.policy == 'grace':
-			algo_args._grace_cfg         = config.grace
+		if config.robot.policy in ('grace', 'gram_map'):
+			# 'gram_map' is the legacy name saved in stageA/B/C checkpoints
+			grace_cfg = getattr(config, 'grace', None) or getattr(config, 'gram_map', None)
+			algo_args._grace_cfg         = grace_cfg
 			algo_args.grace_use_aux_loss = False   # never compute aux loss during eval
 		# load the policy weights
 		actor_critic = Policy(
