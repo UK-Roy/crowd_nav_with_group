@@ -1,0 +1,99 @@
+================================================================================
+GRACE — Group Detection Results Record
+================================================================================
+Test set: gram_v2_data/test.npz  (~8,549 frames)
+Val set:  gram_v2_data/val.npz   (~8,133 frames, used for eps tuning only)
+Metrics:
+  F1      — pairwise same-group pair classification (threshold 0.5)
+  Prec    — pairwise precision
+  Recall  — pairwise recall
+  ARI     — Adjusted Rand Index (whole-scene cluster quality)
+  AUROC   — area under ROC curve (probabilistic methods only; — = N/A)
+
+Last updated: 2026-05-12
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+TABLE 1 — MAIN COMPARISON  (CoRL main paper, Table 2 / grace.tex)
+────────────────────────────────────────────────────────────────────────────────
+Run command:
+  bash run_dbscan_comparison.sh
+
+Method                              F1     Prec   Recall   ARI    AUROC
+────────────────────────────────────────────────────────────────────────────────
+[Classical baselines]
+DBSCAN pos. only  (eps*=1.5)       0.314  0.261  0.395   0.149   —
+DBSCAN pos.+vel.  (eps*=2.5)       0.379  0.285  0.566   0.310   —
+────────────────────────────────────────────────────────────────────────────────
+[Ours — GroupDetector]
+Phase 1: encoder only              0.687  0.762  0.625   0.558   0.935
+Phase 2: enc.+GNN (GRACE backbone) 0.770  0.709  0.843   0.631   0.974  ← BEST
+────────────────────────────────────────────────────────────────────────────────
+Notes:
+  - eps* = best epsilon found by val-set sweep (300 samples)
+  - Phase 2 is the backbone used inside the full GRACE navigation policy
+  - Phase 1 results re-evaluated from checkpoint to get ARI (not in saved results.pt)
+
+
+────────────────────────────────────────────────────────────────────────────────
+TABLE 2 — DBSCAN EPSILON SWEEP  (CoRL appendix, Table A2 / grace_appendix.tex)
+────────────────────────────────────────────────────────────────────────────────
+Run command (fill all rows at once, ~30-60s):
+  python eval_detection_comparison.py --eps-sweep-only --n-test 2000
+
+Run command (one row at a time):
+  python eval_detection_comparison.py --fixed-eps <EPS> --mode <MODE> --dbscan-only
+
+                                     F1     Prec   Recall   ARI
+────────────────────────────────────────────────────────────────────────────────
+[DBSCAN — position only]
+  eps = 0.5                         TBD    TBD    TBD      TBD
+  eps = 0.8                         TBD    TBD    TBD      TBD
+  eps = 1.0                         TBD    TBD    TBD      TBD
+  eps = 1.2                         TBD    TBD    TBD      TBD
+  eps = 1.5  ← val-sweep best       0.314  0.261  0.395   0.149
+  eps = 2.0                         TBD    TBD    TBD      TBD
+  eps = 2.5                         TBD    TBD    TBD      TBD
+
+[DBSCAN — position + velocity (vel_scale=0.5)]
+  eps = 0.5                         TBD    TBD    TBD      TBD
+  eps = 0.8                         TBD    TBD    TBD      TBD
+  eps = 1.0                         TBD    TBD    TBD      TBD
+  eps = 1.2                         TBD    TBD    TBD      TBD
+  eps = 1.5                         TBD    TBD    TBD      TBD
+  eps = 2.0                         TBD    TBD    TBD      TBD
+  eps = 2.5  ← val-sweep best       0.379  0.285  0.566   0.310
+
+[Ours — GroupDetector (for reference)]
+  Phase 1: encoder only             0.687  0.762  0.625   0.558
+  Phase 2: enc.+GNN (GRACE)        0.770  0.709  0.843   0.631  ← BEST
+────────────────────────────────────────────────────────────────────────────────
+Instructions for filling TBD rows:
+  1. Run:  python eval_detection_comparison.py --eps-sweep-only --n-test 2000
+  2. Copy printed values into the TBD cells above
+  3. Update grace_appendix.tex  →  Table A2 (tab:detection_full)
+     Replace \tbd{} cells with the numeric values
+
+
+────────────────────────────────────────────────────────────────────────────────
+HOW TO UPDATE THE CORL PAPER FROM THIS FILE
+────────────────────────────────────────────────────────────────────────────────
+
+Main paper (grace.tex):
+  Table 2 (tab:detection) — update rows from TABLE 1 above.
+  Location: \subsection{Perception Backbone Evaluation} → \begin{table}
+
+Appendix (grace_appendix.tex):
+  Table A2 (tab:detection_full) — update rows from TABLE 2 above.
+  Location: \section{Group Detection Evaluation} → \begin{table}
+  Replace each \tbd{} with the numeric value from this file.
+
+
+────────────────────────────────────────────────────────────────────────────────
+HISTORY OF RUNS
+────────────────────────────────────────────────────────────────────────────────
+2026-05-12  Initial results. Phase2 from saved phase2_results.pt.
+            Phase1 ARI re-evaluated from checkpoint (was missing in results.pt).
+            DBSCAN best-eps from val-sweep (300 samples), tested on 2000 samples.
+================================================================================

@@ -150,6 +150,84 @@ python visualize_ablation.py --ablation all --plot all --seed 42
 
 All outputs are saved to `ablation_figures/`.
 
+---
+
+## Group Detection: DBSCAN vs Perception Module
+
+Validates GRACE's GroupDetector backbone against DBSCAN in isolation, independent of the navigation policy.
+Results feed directly into the CoRL paper (main paper Table~2 and Appendix §A.2).
+All results are recorded in `perception_detection_results.txt`.
+
+### Full pipeline (data collection → final comparison)
+
+**Step 0 — Collect rollout data** (only needed if `gram_v2_data/` is missing):
+```bash
+python gram_v2_collect_data.py          # collects ~30k frames into gram_v2_data/
+```
+
+**Step 1 — Train the perception modules** (only needed if checkpoints are missing):
+```bash
+# Phase 1: encoder + edge network (no GNN)
+python gram_v2_train_phase1.py --variant B \
+    --save trained_models/gram_v2/phase1_v2/B
+
+# Phase 2: encoder + GNN (= GRACE backbone)
+python gram_v2_train_phase2.py \
+    --phase1 trained_models/gram_v2/phase1_v2/B/best.pt \
+    --save trained_models/gram_v2/phase2_v2
+```
+
+**Step 2 — Evaluate checkpoints** (regenerate `results.pt` from existing checkpoints):
+```bash
+bash run_perception_eval.sh             # evaluates both Phase1 and Phase2
+bash run_perception_eval.sh --phase2-only   # Phase2 (GRACE backbone) only
+```
+
+**Step 3 — Run the full comparison** (main paper table: best-eps DBSCAN vs our modules):
+```bash
+bash run_dbscan_comparison.sh           # uses saved results.pt (fast, ~30s)
+bash run_dbscan_comparison.sh --force   # re-runs model inference from scratch
+```
+Prints ASCII + LaTeX table. Copy LaTeX into `grace.tex` Table~2.
+
+### Getting DBSCAN results for specific ε values (appendix table)
+
+The CoRL appendix (§A.2) shows DBSCAN results for every ε. Fill rows one at a time:
+
+```bash
+# Full sweep — fastest way to fill the whole appendix table at once:
+python eval_detection_comparison.py --eps-sweep-only --n-test 2000
+
+# Single ε row — position only:
+python eval_detection_comparison.py --fixed-eps 0.5  --mode position --dbscan-only
+python eval_detection_comparison.py --fixed-eps 0.8  --mode position --dbscan-only
+python eval_detection_comparison.py --fixed-eps 1.0  --mode position --dbscan-only
+python eval_detection_comparison.py --fixed-eps 1.2  --mode position --dbscan-only
+python eval_detection_comparison.py --fixed-eps 2.0  --mode position --dbscan-only
+python eval_detection_comparison.py --fixed-eps 2.5  --mode position --dbscan-only
+
+# Single ε row — position + velocity:
+python eval_detection_comparison.py --fixed-eps 0.5  --mode pos+vel --dbscan-only
+python eval_detection_comparison.py --fixed-eps 0.8  --mode pos+vel --dbscan-only
+python eval_detection_comparison.py --fixed-eps 1.0  --mode pos+vel --dbscan-only
+python eval_detection_comparison.py --fixed-eps 1.2  --mode pos+vel --dbscan-only
+python eval_detection_comparison.py --fixed-eps 1.5  --mode pos+vel --dbscan-only
+python eval_detection_comparison.py --fixed-eps 2.0  --mode pos+vel --dbscan-only
+```
+
+Copy each result into `perception_detection_results.txt` → then update the appendix LaTeX table.
+
+### Results summary (confirmed 2026-05-12)
+
+| Method | F1 | Prec | Recall | ARI |
+|---|---|---|---|---|
+| DBSCAN pos. (ε*=1.5) | 0.314 | 0.261 | 0.395 | 0.149 |
+| DBSCAN pos+vel (ε*=2.5) | 0.379 | 0.285 | 0.566 | 0.310 |
+| GroupDetector Phase1 (encoder) | 0.687 | 0.762 | 0.625 | 0.558 |
+| **GroupDetector Phase2 (GNN — GRACE backbone)** | **0.770** | 0.709 | **0.843** | **0.631** |
+
+---
+
 ### Baseline results (confirmed 2026-05-12)
 
 | Model | SR | CR | TR | GCR | Mean Reward |
