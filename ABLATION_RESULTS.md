@@ -26,7 +26,7 @@ Also note `Mean Reward: X.XX` from the last line.
 
 | # | Model | SR | CR | TR | GCR | Mean Reward | Best Checkpoint |
 |---|---|---|---|---|---|---|---|
-| — | **GRACE full** (baseline) | **0.92** | **0.05** | **0.03** | **0.00%** | **32.37** | stageC/41000.pt |
+| — | **GRACE full** (baseline) | **0.92** | **0.03** | **0.05** | **0.07%** | **32.70** | stageC/best.pt (=41000.pt) |
 | C1 | No group layers (L3+L4 zeroed) | | | | | | |
 | C2 | K=1 slot (single group prototype) | | | | | | |
 | C3 | No trajectory layers (L2 zeroed) | | | | | | |
