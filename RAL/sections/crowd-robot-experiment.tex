@@ -10,10 +10,29 @@
     \label{fig:sim-com}
 \end{figure*}
 
-\subsection{Simulation Environment}
-We extend the crowd simulation framework from \cite{liu2023intention}, featuring a 12m × 12m space with up to 20 dynamic humans and a holonomic robot with 5m sensing range. Our key contribution is integrating realistic group behaviors alongside individual pedestrians. Groups are detected in real-time using DBSCAN clustering ($\epsilon = 1.5$m, minimum size = 2) rather than ground truth labels. \UT{addressing reviewer concerns about oversimplified detection.}
+\subsection{Realistic Crowd Simulation Benchmark}
+We introduce a benchmark environment extending the framework of~\cite{liu2023intention} with five empirically motivated modeling phases that substantially increase realism over prior simulation settings.
 
-Dynamic groups follow leader-follower dynamics where a randomly selected leader navigates using ORCA while followers maintain cohesion through velocity adjustment: $v_i = v_{leader} + k(c - p_i)$, where $k$ is the cohesion factor and $c$ is the group centroid. Static groups remain stationary, representing conversational clusters.
+\textbf{Phase A — Individual speed variation.}
+Each pedestrian's preferred speed is drawn from $\mathcal{N}(1.34,\,0.26)$~m/s, clipped to $[0.8,\,1.8]$~m/s, following Weidmann (1992). This produces heterogeneous crowd flow rather than the uniform-speed assumption common in prior work.
+
+\textbf{Phase B — Group speed coupling.}
+Dynamic groups travel at $0.85 \times \min_{i \in G} v_{\mathrm{pref},i}$~m/s~\cite{moussaid2010walking}, reflecting the empirical finding that groups naturally slow to accommodate their slowest member.
+
+\textbf{Phase C — F-formation static groups.}
+Stationary groups are initialized in one of four sociologically documented F-formations (vis-à-vis, L-shape, side-by-side, circle)~\cite{kendon1990conducting}, ensuring spatial realism for conversational clusters.
+
+\textbf{Phase D — Leader--follower dynamics.}
+Moving groups have a randomly selected leader navigating via ORCA; followers maintain staggered lateral slots with inter-follower repulsion inspired by Helbing \& Molnár (1995):
+\begin{equation}
+v_i = v_{\mathrm{leader}} + k(c - p_i) + f_{\mathrm{rep},i},
+\end{equation}
+where $k$ is a cohesion factor, $c$ is the group centroid, and $f_{\mathrm{rep},i}$ prevents follower--follower collisions.
+
+\textbf{Phase E — Convex-hull boundaries.}
+Group spatial boundaries are computed as convex hulls of member positions at each timestep, replacing fixed-radius circles. These dynamic polygon boundaries are used for both GCR computation and reward shaping during training of learned baselines.
+
+The arena is a circle of radius 8.5~m with 20 humans organized into 3 groups (3--4 members each, two placed along the robot's path) and remaining individuals navigating independently. Three group types appear: \textit{static\_f} (stationary F-formations), \textit{dynamic\_lf} (leader--follower), and \textit{dynamic\_free} (each member navigates independently via ORCA). The robot is holonomic with a 5~m sensing range. Groups are detected in real-time via DBSCAN ($\epsilon = 1.5$~m, minimum cluster size = 2), without access to ground-truth group labels.
 
 \subsection{Evaluation Scenarios}
 To ensure robust evaluation, we test across five diverse scenarios (100 episodes each):
@@ -52,7 +71,7 @@ where $T = t_{\text{episode}} \cdot f_{\text{ctrl}}$ is the total number of disc
 % \subsection{Implementation Details}
 % We evaluate four baseline methods—ORCA \cite{orca}, Social Force \cite{helbing1995social}, DS-RNN \cite{liu2020decentralized}, and AG-RL \cite{liu2023intention} with and without TAGA integration. Key parameters include: safety margin $S = 0.5$m, critical distance $d_{critical} = 0.3$m, personal distance $d_{personal} = 0.5$m, and detection confidence threshold $\tau = 0.8$. All methods are tested on identical scenarios using fixed random seeds for reproducibility. The safety controller operates at 10Hz, ensuring real-time collision avoidance during group maneuvers.
 \subsection{Implementation Details}
-We evaluate four baseline methods—ORCA \cite{orca}, Social Force \cite{helbing1995social}, DS-RNN \cite{liu2020decentralized}, and AG-RL \cite{liu2023intention} with and without TAGA integration. Key parameters include: safety margin $S = 0.5$m, critical distance $d_{critical} = 0.3$m, personal distance $d_{personal} = 0.5$m. All methods are tested on identical scenarios using fixed random seeds for reproducibility. The safety controller operates at 10Hz, ensuring real-time collision avoidance during group maneuvers.
+We evaluate five navigation baselines: ORCA~\cite{orca}, Social Force (SF)~\cite{helbing1995social}, DS-RNN~\cite{liu2020decentralized}, AG-RL~\cite{liu2023intention}, and GARN~\cite{garn2025}. TAGA is applied on top of each baseline except GARN, which explicitly trains with group-awareness and is evaluated standalone. Key TAGA parameters: safety margin $S = 0.5$~m, critical distance $d_{\mathrm{critical}} = 0.3$~m, personal distance $d_{\mathrm{personal}} = 0.5$~m. All methods are evaluated on 500 randomly generated episodes with fixed seeds for reproducibility. The TAGA safety controller operates at 10~Hz.
 
 % \vspace{-4pt}
 % \section{CROWD ROBOT NAVIGATION BENCHMARK}

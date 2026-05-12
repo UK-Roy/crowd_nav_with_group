@@ -13,7 +13,8 @@
 \hline
 AG-RL & 0.78 & 0.20 & 0.02 & 10.54 & 15.47 & 21.54 \\
 AG-RL+TAGA & \textbf{0.82} & \textbf{0.16} & \textbf{0.02} & 8.82 & 16.79 & 22.68 \\
-% $\Delta$ Improvement & +5.1\% & -20.0\% & 0\% & -16.3\% & +8.5\% & +5.3\% \\
+\hline
+GARN~\cite{garn2025} & -- & -- & -- & -- & -- & -- \\
 \hline
 DS-RNN & 0.64 & 0.32 & 0.04 & 9.87 & 17.23 & 22.15 \\
 DS-RNN+TAGA & 0.66 & 0.29 & 0.05 & 4.13 & 18.45 & 23.87 \\
@@ -144,3 +145,17 @@ This efficiency, combined with no retraining requirements, enables immediate int
 \UT{Try to address the 2nd review of reviwer 31289}Figure \ref{fig:sim-com} illustrates the behavioral transformation TAGA provides. While baseline methods treat groups as collections of individuals—often attempting to exploit perceived gaps—TAGA recognizes and respects group boundaries through tangent navigation. The marginal increase in path length represents socially appropriate detours rather than inefficiency, trading minor time costs for significant improvements in human comfort and social acceptance.
 
 Notably, the performance variations across methods reveal interesting insights: learning-based methods (AG-RL, DS-RNN) show better baseline group handling due to implicit pattern learning, yet still benefit significantly from explicit TAGA guidance. Reactive methods (ORCA, SF) demonstrate larger relative improvements, suggesting that geometric group awareness effectively compensates for their lack of learned social behaviors.
+
+\subsection{Reactive--Learning Asymmetry}
+
+A consistent pattern emerges across all experiments: \textbf{TAGA provides the largest benefits for reactive methods and diminishing returns for learning-based methods.}
+
+For reactive baselines (ORCA, SF), TAGA reduces GCR by 40--58\% and improves SR by 4--7 percentage points. These methods have no internal model of group behavior — every avoidance decision is made greedily based on immediate observations. Explicit tangent navigation fills this gap directly.
+
+For learning-based baselines (DS-RNN, AG-RL), the SR improvement from TAGA is smaller (2--5 pp) and GCR reduction, while still meaningful, is less dramatic. These methods have implicitly learned to route around dense clusters during training, giving them a baseline level of group-awareness that reduces how much TAGA can add.
+
+For GARN, a group-reward-trained neural policy that explicitly optimizes for group boundary avoidance, TAGA is not applied — its training objective already internalizes the behavior TAGA provides reactively. Results reported separately (Table~\ref{table:main-results}).
+
+This asymmetry carries a practical message: \textit{modular reactive group-awareness is most valuable when the base navigation policy has no exposure to group dynamics during training}. For practitioners deploying classical navigation stacks (ORCA, path planners) in environments with human groups, TAGA offers an immediate, zero-retraining upgrade. For teams with access to retraining, incorporating group-awareness into the training objective (as in GARN or AG-RL with group rewards) may be more effective long-term.
+
+The finding also reveals a limitation of purely reactive group avoidance: since TAGA computes tangent paths based on current group state, it cannot anticipate group movement, occasionally causing unnecessary detours when a moving group would have cleared the robot's path. Learned policies partially mitigate this through temporal reasoning embedded in their recurrent state.
