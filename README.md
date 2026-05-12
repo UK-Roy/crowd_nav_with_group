@@ -150,6 +150,135 @@ python visualize_ablation.py --ablation all --plot all --seed 42
 
 All outputs are saved to `ablation_figures/`.
 
+---
+
+## Group Detection: DBSCAN vs Perception Module
+
+GRACE uses a two-phase learned GroupDetector as its perception backbone. This section documents how to replicate the two detection tables in the CoRL paper.
+
+| Table | CoRL location | Script |
+|---|---|---|
+| Table 1 — main comparison (4 rows) | §5.2, `tab:detection` in `grace.tex` | `bash run_dbscan_comparison.sh` |
+| Table 2 — DBSCAN ε sweep (14 rows) | Appendix A.2, `tab:detection_full` in `grace_appendix.tex` | `bash run_eps_sweep.sh` |
+
+Results are saved to `perception_detection_results.txt` (auto-created if missing).
+
+---
+
+### Perception backbone: data collection → training
+
+The GroupDetector is trained in two phases using data collected from the simulator.
+
+**Step 1 — Collect training data**
+
+```bash
+python collect_group_data.py --output_dir gram_v2_data --n_episodes 5000
+```
+
+This generates `gram_v2_data/{train,val,test}.npz` — pairwise (feature, label) samples recording which human pairs belong to the same group. Each sample is a 21-d feature vector (position, velocity, distance, bearing, relative speed).
+
+**Step 2 — Train Phase 1: encoder only (no GNN)**
+
+```bash
+python train_group_detector.py \
+    --data_dir gram_v2_data \
+    --output_dir trained_models/gram_v2/phase1_v2/B \
+    --n_gnn_layers 0 --hidden_size 256 --variant B
+```
+
+Phase 1 is a lightweight encoder + PairwiseEdgeNetwork classifier (no graph convolution). Checkpoint saved to `phase1_v2/B/best.pt`.
+
+**Step 3 — Train Phase 2: encoder + GNN (GRACE backbone)**
+
+```bash
+python train_group_detector.py \
+    --data_dir gram_v2_data \
+    --output_dir trained_models/gram_v2/phase2_v2 \
+    --n_gnn_layers 3 --hidden_size 256 --variant B \
+    --resume --load_path trained_models/gram_v2/phase1_v2/B/best.pt
+```
+
+Phase 2 adds a 3-layer GNN on top of Phase 1. This is the backbone used inside the full GRACE navigation policy. Checkpoint saved to `phase2_v2/best.pt`.
+
+> **Pre-trained checkpoints** — if you have `trained_models/gram_v2/phase1_v2/B/best.pt` and `trained_models/gram_v2/phase2_v2/best.pt`, skip Steps 1–3 and go straight to evaluation below.
+
+---
+
+### Replicate Table 1 — main comparison
+
+Compares DBSCAN (position-only and position+velocity) against both GroupDetector phases on the held-out test set.
+
+```bash
+bash run_dbscan_comparison.sh
+```
+
+- Auto-creates `perception_detection_results.txt` if it doesn't exist.
+- Detects saved `results.pt` files; runs full model inference only if they are missing.
+- Prints the comparison table to stdout and writes results into `perception_detection_results.txt` (Table 1).
+- Re-run with `bash run_dbscan_comparison.sh --force` to force re-evaluation even when cached results exist.
+
+To regenerate model `results.pt` files from existing checkpoints only:
+
+```bash
+bash run_perception_eval.sh            # both phases
+bash run_perception_eval.sh --phase1-only
+bash run_perception_eval.sh --phase2-only
+bash run_perception_eval.sh --no-cuda  # CPU fallback
+```
+
+**Confirmed results (2026-05-12, test set ~8,549 frames)**
+
+| Method | F1 | Prec | Recall | ARI | AUROC |
+|---|---|---|---|---|---|
+| DBSCAN pos. only (ε*=1.5) | 0.314 | 0.261 | 0.395 | 0.149 | — |
+| DBSCAN pos.+vel. (ε*=2.5) | 0.379 | 0.285 | 0.566 | 0.310 | — |
+| Phase 1: encoder only | 0.687 | 0.762 | 0.625 | 0.558 | 0.935 |
+| **Phase 2: enc.+GNN (GRACE backbone)** | **0.770** | **0.709** | **0.843** | **0.631** | **0.974** |
+
+ε* = best ε found by val-set sweep (300 samples).
+
+---
+
+### Replicate Table 2 — DBSCAN ε sweep
+
+Sweeps ε ∈ {0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5} for both position-only and position+velocity modes.
+
+```bash
+bash run_eps_sweep.sh
+```
+
+- Auto-creates `perception_detection_results.txt` if it doesn't exist.
+- Runs each ε value sequentially (~30–60 s total) and writes each result into the matching row in `perception_detection_results.txt` (Table 2) as soon as it completes.
+- To control test-set size: `bash run_eps_sweep.sh --n-test=1000` (default 2000).
+- CPU fallback: `bash run_eps_sweep.sh --no-cuda`.
+
+One row at a time (alternative):
+
+```bash
+python eval_detection_comparison.py --fixed-eps 1.0 --mode position --dbscan-only --n-test 2000
+python eval_detection_comparison.py --fixed-eps 1.0 --mode pos+vel  --dbscan-only --n-test 2000
+```
+
+Full sweep table (print all ε rows, no recording):
+
+```bash
+python eval_detection_comparison.py --eps-sweep-only --n-test 2000
+```
+
+---
+
+### `perception_detection_results.txt` — where results are stored
+
+Both scripts write into `perception_detection_results.txt` in the repo root. This file:
+
+- Is automatically created (with blank TBD rows) by both `run_dbscan_comparison.sh` and `run_eps_sweep.sh` if it does not exist — **no manual setup needed**.
+- Tracks Table 1 (main comparison) and Table 2 (ε sweep) in CoRL paper format.
+- Contains copy-paste instructions for updating `grace.tex` and `grace_appendix.tex` once all rows are filled.
+
+After running both scripts, open `perception_detection_results.txt` and copy the filled values into the LaTeX tables.
+
+---
+
 ### Baseline results (confirmed 2026-05-12)
 
 | Model | SR | CR | TR | GCR | Mean Reward |
