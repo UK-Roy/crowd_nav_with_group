@@ -37,8 +37,8 @@ class FixedNormal(torch.distributions.Normal):
     def log_probs(self, actions):
         return super(FixedNormal, self).log_prob(actions).sum(-1, keepdim=True)
 
-    def entrop(self):
-        return super.entropy().sum(-1)
+    def entropy(self):
+        return super().entropy().sum(-1)   # sum over action dims → shape (B,)
 
     def mode(self):
         return self.mean
@@ -91,7 +91,9 @@ class DiagGaussian(nn.Module):
         if x.is_cuda:
             zeros = zeros.cuda()
 
-        action_logstd = self.logstd(zeros)
+        # Clamp logstd to [-3, 0.5] to prevent entropy collapse or runaway.
+        # σ range: [e^-3, e^0.5] ≈ [0.05, 1.65] — covers full-speed to cautious.
+        action_logstd = self.logstd(zeros).clamp(-3.0, 0.5)
         return FixedNormal(action_mean, action_logstd.exp())
 
 
