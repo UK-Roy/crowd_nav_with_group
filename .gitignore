@@ -62,3 +62,7 @@ references/
 # --- Legacy / misc ---
 papers/
 ral/
+
+# --- Paper writing folders (local only, not pushed to GitHub) ---
+corl_2026/
+RAL/
