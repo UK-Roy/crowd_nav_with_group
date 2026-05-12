@@ -170,7 +170,9 @@ Results feed into two CoRL tables. All values are recorded in `perception_detect
 ```bash
 bash run_dbscan_comparison.sh
 ```
-Runs in ~30 s. Prints ASCII + LaTeX table. Copy LaTeX into `grace.tex` Table 2.
+Runs in ~30 s. Prints ASCII + LaTeX table. Results are written automatically into
+`perception_detection_results.txt` (Table 1 section). If the file doesn't exist it is
+created automatically — no manual setup needed.
 
 **Force re-evaluation** — re-run model inference from checkpoint (ignores saved results.pt):
 ```bash
