@@ -404,6 +404,299 @@ Edit the `model_dirs` list inside `plot.py` to choose training runs. Reads `.csv
 
 ---
 
+## Ablation Studies (C1–C5)
+
+Each ablation answers one question: "what happens if we remove this part of GRACE?"
+All ablations start from the **same Stage B checkpoint** so the only variable is the
+missing component. Each takes ~1 GPU-day (same as Stage C).
+
+### What each ablation removes
+
+| ID | Flag | What is disabled | Question answered |
+|---|---|---|---|
+| C1 | `--ablation_no_group_layers` | Group cohesion (L6) + repulsion (L7) channels zeroed | Does the group-specific cost map matter, or is individual occupancy enough? |
+| C2 | `--ablation_K_slots 1` | K=3 slots replaced with K=1 (single group prototype) | Does having multiple group slots help vs one merged slot? |
+| C3 | `--ablation_no_traj_layers` | Trajectory horizon channels L2–L5 zeroed | Does predicting future motion matter, or is current position enough? |
+| C4 | `--ablation_no_aux_loss` | Self-supervised occupancy auxiliary loss removed | Does the auxiliary loss improve cost-map quality? |
+| C5 | `--ablation_uniform_alpha` | SlotAttention replaced with uniform 1/N assignment | Does learned soft grouping help vs treating all humans equally? |
+
+---
+
+### Step-by-step: run all 5 ablations
+
+**Prerequisite:** Stage B checkpoint must exist at
+`trained_models/gram_map/stageB/checkpoints/best.pt`.
+Use the same `config.py` settings as Stage C (freeze_backbone=False, use_slots=True, use_aux_loss=True)
+except where the ablation flag overrides behaviour internally.
+
+**C1 — No group cost layers:**
+```bash
+python train.py \
+    --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 \
+    --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C1_no_group \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_no_group_layers
+```
+
+**C2 — Single slot (K=1):**
+```bash
+python train.py \
+    --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 \
+    --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C2_K1 \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_K_slots 1
+```
+
+**C3 — No trajectory layers:**
+```bash
+python train.py \
+    --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 \
+    --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C3_no_traj \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_no_traj_layers
+```
+
+**C4 — No auxiliary loss:**
+```bash
+python train.py \
+    --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 \
+    --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C4_no_aux \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_no_aux_loss
+```
+
+**C5 — Uniform slot assignment:**
+```bash
+python train.py \
+    --env-name CrowdSimVarNum-v0 \
+    --human_node_rnn_size 256 \
+    --human_human_edge_rnn_size 14 \
+    --output_dir trained_models/gram_map/ablation_C5_uniform \
+    --lr 5e-5 --use-linear-lr-decay \
+    --resume --load_path trained_models/gram_map/stageB/checkpoints/best.pt \
+    --ablation_uniform_alpha
+```
+
+---
+
+### Step-by-step: evaluate all ablations
+
+After training finishes, evaluate each ablation with `test.py`:
+
+```bash
+# Full GRACE (baseline for comparison)
+python test.py --model_dir trained_models/gram_map/stageC       --test_model best.pt
+
+# C1
+python test.py --model_dir trained_models/gram_map/ablation_C1_no_group  --test_model best.pt
+
+# C2
+python test.py --model_dir trained_models/gram_map/ablation_C2_K1        --test_model best.pt
+
+# C3
+python test.py --model_dir trained_models/gram_map/ablation_C3_no_traj   --test_model best.pt
+
+# C4
+python test.py --model_dir trained_models/gram_map/ablation_C4_no_aux    --test_model best.pt
+
+# C5
+python test.py --model_dir trained_models/gram_map/ablation_C5_uniform   --test_model best.pt
+```
+
+Or run all at once with `record_comparison.py` to get a side-by-side metrics table.
+First add the ablation entries to `POLICY_REGISTRY` in `record_comparison.py`:
+
+```python
+dict(label='grace_full',    policy_key='grace', model_dir='trained_models/gram_map/stageC',              test_model='best.pt', with_taga=False),
+dict(label='grace_C1',      policy_key='grace', model_dir='trained_models/gram_map/ablation_C1_no_group', test_model='best.pt', with_taga=False),
+dict(label='grace_C2',      policy_key='grace', model_dir='trained_models/gram_map/ablation_C2_K1',       test_model='best.pt', with_taga=False),
+dict(label='grace_C3',      policy_key='grace', model_dir='trained_models/gram_map/ablation_C3_no_traj',  test_model='best.pt', with_taga=False),
+dict(label='grace_C4',      policy_key='grace', model_dir='trained_models/gram_map/ablation_C4_no_aux',   test_model='best.pt', with_taga=False),
+dict(label='grace_C5',      policy_key='grace', model_dir='trained_models/gram_map/ablation_C5_uniform',  test_model='best.pt', with_taga=False),
+```
+
+Then run:
+```bash
+# Metrics only (fast — no video rendering)
+python record_comparison.py \
+    --policies grace_full,grace_C1,grace_C2,grace_C3,grace_C4,grace_C5 \
+    --seeds 0,1,2 \
+    --no-video
+
+# With videos (for paper supplementary / qualitative figures)
+python record_comparison.py \
+    --policies grace_full,grace_C1,grace_C2,grace_C3,grace_C4,grace_C5 \
+    --seeds 0,1,2 \
+    --fps 10 --dpi 150
+```
+
+Output: `results/metrics.csv` — paste the SR / CR / GCR columns into Table 2 of `grace.tex`.
+
+---
+
+### Step-by-step: visualise what each ablation does to the cost map
+
+Compare how the cost map looks with vs without each component using `visualize_cost_map.py`.
+Use the **same seed** for a fair visual comparison:
+
+```bash
+# Full GRACE — all 9 channels active
+python visualize_cost_map.py \
+    --model_dir trained_models/gram_map/stageC \
+    --test_model best.pt --seed 3 \
+    --out videos/costmap_full.mp4
+
+# C1 — L6 and L7 will be flat (zeroed)
+python visualize_cost_map.py \
+    --model_dir trained_models/gram_map/ablation_C1_no_group \
+    --test_model best.pt --seed 3 \
+    --out videos/costmap_C1_no_group.mp4
+
+# C3 — L2–L5 will be flat (zeroed)
+python visualize_cost_map.py \
+    --model_dir trained_models/gram_map/ablation_C3_no_traj \
+    --test_model best.pt --seed 3 \
+    --out videos/costmap_C3_no_traj.mp4
+
+# C5 — group layers present but driven by uniform alpha (blurry, unstructured)
+python visualize_cost_map.py \
+    --model_dir trained_models/gram_map/ablation_C5_uniform \
+    --test_model best.pt --seed 3 \
+    --out videos/costmap_C5_uniform.mp4
+```
+
+These videos directly show the reviewer what each component contributes.
+
+---
+
+### Step-by-step: plot training curves for all ablations
+
+Compare learning curves to see if each component helps training stability:
+
+```bash
+python plot.py
+```
+
+Edit the `model_dirs` list inside `plot.py` to point to all ablation directories:
+```python
+model_dirs = [
+    'trained_models/gram_map/stageC',
+    'trained_models/gram_map/ablation_C1_no_group',
+    'trained_models/gram_map/ablation_C2_K1',
+    'trained_models/gram_map/ablation_C3_no_traj',
+    'trained_models/gram_map/ablation_C4_no_aux',
+    'trained_models/gram_map/ablation_C5_uniform',
+]
+```
+
+---
+
+## Visualisation — Complete Workflow
+
+Use the following sequence to produce all figures and videos for the paper.
+
+### 1. Main qualitative figure (environment + robot behaviour)
+
+```bash
+# Record one clear episode per policy — use same seed across all for fair comparison
+python record_episode.py --policy grace --seed 3 --out videos/grace_episode.mp4 --dpi 150 --fps 10
+python record_episode.py --policy orca  --seed 3 --out videos/orca_episode.mp4  --dpi 150 --fps 10
+python record_episode.py --policy garn  --seed 3 --out videos/garn_episode.mp4  --dpi 150 --fps 10
+```
+
+### 2. Cost-map figure (shows what GRACE "sees")
+
+```bash
+# Side-by-side: env left, all 9 cost channels right
+python visualize_cost_map.py \
+    --model_dir trained_models/gram_map/stageC \
+    --test_model best.pt --seed 3 \
+    --fps 10 --dpi 150 \
+    --out videos/grace_costmap.mp4
+```
+
+### 3. Slot assignment figure (shows GroupDetector + SlotAttention working)
+
+```bash
+# Episode with per-human colour = which slot claimed them
+python visualize_grace.py \
+    --model_dir trained_models/gram_map/stageC \
+    --test_model best.pt --seed 3 \
+    --show-hulls \
+    --fps 10 --dpi 150 \
+    --out videos/grace_slots.mp4
+```
+
+### 4. Perception quality figure (GroupDetector assignments)
+
+```bash
+# Visual frame grid showing ground-truth groups vs predicted assignments
+python grace_perception_visualize_detection.py \
+    --data gram_v2_data \
+    --phase2 trained_models/gram_v2/phase2_v2/best.pt \
+    --mode best \
+    --n-frames 6 \
+    --gif \
+    --out figures/detection_best.gif
+
+# Also record a worst-case for honest evaluation
+python grace_perception_visualize_detection.py \
+    --data gram_v2_data \
+    --phase2 trained_models/gram_v2/phase2_v2/best.pt \
+    --mode worst \
+    --n-frames 6 \
+    --gif \
+    --out figures/detection_worst.gif
+```
+
+### 5. Ablation cost-map comparison (for appendix Figure A3)
+
+```bash
+# All 4 interesting ablations at same seed — shows what each component adds
+for LABEL in full C1_no_group C3_no_traj C5_uniform; do
+    DIR="trained_models/gram_map/ablation_${LABEL}"
+    [ "$LABEL" = "full" ] && DIR="trained_models/gram_map/stageC"
+    python visualize_cost_map.py \
+        --model_dir $DIR --test_model best.pt \
+        --seed 3 --fps 10 --dpi 150 \
+        --out "videos/costmap_${LABEL}.mp4"
+done
+```
+
+### 6. Multi-policy quantitative comparison (for Table 1)
+
+```bash
+python record_comparison.py \
+    --policies grace,orca,social_force,srnn,selfAttn_merge_srnn,garn,gram_v2 \
+    --seeds 0,1,2,3,4 \
+    --no-video
+# → results/metrics.csv — copy SR/CR/TR/GCR columns into grace.tex Table 1
+```
+
+### 7. Ablation table (for Table 2)
+
+```bash
+python record_comparison.py \
+    --policies grace_full,grace_C1,grace_C2,grace_C3,grace_C4,grace_C5 \
+    --seeds 0,1,2,3,4 \
+    --no-video
+# → results/metrics.csv — copy into grace.tex Table 2
+```
+
+---
+
 ## Visualisation
 
 ### `visualize_grace.py` — episode with slot assignment overlay
