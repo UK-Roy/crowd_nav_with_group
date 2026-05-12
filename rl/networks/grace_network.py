@@ -30,8 +30,8 @@ Run flags:
 import torch
 import torch.nn as nn
 
-from crowd_nav.gram_v2.models import GroupDetector, FEAT_DIM, INPUT_DIM
-from crowd_nav.gram_v2.slot_attention import SlotAttention
+from crowd_nav.grace_perception.models import GroupDetector, FEAT_DIM, INPUT_DIM
+from crowd_nav.grace_perception.slot_attention import SlotAttention
 from rl.networks.grace_synthesizer import CostMapSynthesizer, OccupancyHead, CostMapPlanner
 
 MAX_HUMANS  = 20

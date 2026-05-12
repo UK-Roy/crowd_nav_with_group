@@ -1,5 +1,5 @@
 """
-GRAM-v2 — Stage 4a: Slot Attention group pooling.
+GRACE perception — Phase 3: Slot Attention group pooling.
 
 Compresses N per-human GNN-refined embeddings g_i into K=3 group-prototype
 vectors via iterative cross-attention (Locatello et al., NeurIPS 2020).
@@ -15,7 +15,7 @@ Architecture (one forward pass):
   3. Return final slots and the last-iteration attention map.
 
 Usage:
-  from crowd_nav.gram_v2.slot_attention import SlotAttention
+  from crowd_nav.grace_perception.slot_attention import SlotAttention
 
   sa = SlotAttention()                # K=3, slot_dim=64, n_iters=3
   slots, attn = sa(g, mask)
@@ -25,7 +25,7 @@ Usage:
     attn  : (B, K, N)    attention weights, softmax over K
                          (attn[b, k, n] ≈ probability human n belongs to slot k)
 
-Training losses  (gram_v2_train_phase3.py):
+Training losses  (grace_perception_train_phase3.py):
   co_assignment_loss  : BCE on co-assignment prob vs GT pairwise labels — no
                         Hungarian matching needed, fully differentiable.
   slot_diversity_loss : entropy regulariser that prevents all humans collapsing

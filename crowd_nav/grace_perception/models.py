@@ -202,7 +202,7 @@ class GroupDetector(nn.Module):
         self.edge_net = PairwiseEdgeNetwork(embed_dim, use_pairwise_temporal)
 
         if n_gnn_layers > 0:
-            from crowd_nav.gram_v2.gnn import GroupGNN
+            from crowd_nav.grace_perception.gnn import GroupGNN
             self.gnn = GroupGNN(embed_dim, gnn_hidden, n_gnn_layers)
         else:
             self.gnn = None
