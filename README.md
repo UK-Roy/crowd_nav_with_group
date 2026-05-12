@@ -158,10 +158,10 @@ GRACE uses a two-phase learned GroupDetector as its perception backbone. This se
 
 | Table | CoRL location | Script |
 |---|---|---|
-| Table 1 — main comparison (4 rows) | §5.2, `tab:detection` in `grace.tex` | `bash run_dbscan_comparison.sh` |
-| Table 2 — DBSCAN ε sweep (14 rows) | Appendix A.2, `tab:detection_full` in `grace_appendix.tex` | `bash run_eps_sweep.sh` |
+| Table 1 — main comparison (4 rows) | §5.2, `tab:detection` in `grace.tex` | `bash scripts/run_dbscan_comparison.sh` |
+| Table 2 — DBSCAN ε sweep (14 rows) | Appendix A.2, `tab:detection_full` in `grace_appendix.tex` | `bash scripts/run_eps_sweep.sh` |
 
-Results are saved to `perception_detection_results.txt` (auto-created if missing).
+Scripts live in `scripts/`. Results are saved to `results/perception_detection_results.txt` (auto-created if missing — no setup needed).
 
 ---
 
@@ -209,21 +209,21 @@ Phase 2 adds a 3-layer GNN on top of Phase 1. This is the backbone used inside t
 Compares DBSCAN (position-only and position+velocity) against both GroupDetector phases on the held-out test set.
 
 ```bash
-bash run_dbscan_comparison.sh
+bash scripts/run_dbscan_comparison.sh
 ```
 
-- Auto-creates `perception_detection_results.txt` if it doesn't exist.
+- Auto-creates `results/perception_detection_results.txt` if it doesn't exist.
 - Detects saved `results.pt` files; runs full model inference only if they are missing.
-- Prints the comparison table to stdout and writes results into `perception_detection_results.txt` (Table 1).
-- Re-run with `bash run_dbscan_comparison.sh --force` to force re-evaluation even when cached results exist.
+- Prints the comparison table to stdout and writes results into `results/perception_detection_results.txt` (Table 1).
+- Re-run with `bash scripts/run_dbscan_comparison.sh --force` to force re-evaluation even when cached results exist.
 
 To regenerate model `results.pt` files from existing checkpoints only:
 
 ```bash
-bash run_perception_eval.sh            # both phases
-bash run_perception_eval.sh --phase1-only
-bash run_perception_eval.sh --phase2-only
-bash run_perception_eval.sh --no-cuda  # CPU fallback
+bash scripts/run_perception_eval.sh            # both phases
+bash scripts/run_perception_eval.sh --phase1-only
+bash scripts/run_perception_eval.sh --phase2-only
+bash scripts/run_perception_eval.sh --no-cuda  # CPU fallback
 ```
 
 **Confirmed results (2026-05-12, test set ~8,549 frames)**
@@ -244,13 +244,13 @@ bash run_perception_eval.sh --no-cuda  # CPU fallback
 Sweeps ε ∈ {0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5} for both position-only and position+velocity modes.
 
 ```bash
-bash run_eps_sweep.sh
+bash scripts/run_eps_sweep.sh
 ```
 
-- Auto-creates `perception_detection_results.txt` if it doesn't exist.
-- Runs each ε value sequentially (~30–60 s total) and writes each result into the matching row in `perception_detection_results.txt` (Table 2) as soon as it completes.
-- To control test-set size: `bash run_eps_sweep.sh --n-test=1000` (default 2000).
-- CPU fallback: `bash run_eps_sweep.sh --no-cuda`.
+- Auto-creates `results/perception_detection_results.txt` if it doesn't exist.
+- Runs each ε value sequentially (~30–60 s total) and writes each result into the matching row in `results/perception_detection_results.txt` (Table 2) as soon as it completes.
+- To control test-set size: `bash scripts/run_eps_sweep.sh --n-test=1000` (default 2000).
+- CPU fallback: `bash scripts/run_eps_sweep.sh --no-cuda`.
 
 One row at a time (alternative):
 
@@ -267,15 +267,15 @@ python eval_detection_comparison.py --eps-sweep-only --n-test 2000
 
 ---
 
-### `perception_detection_results.txt` — where results are stored
+### `results/perception_detection_results.txt` — where results are stored
 
-Both scripts write into `perception_detection_results.txt` in the repo root. This file:
+Both scripts write into `results/perception_detection_results.txt`. This file:
 
-- Is automatically created (with blank TBD rows) by both `run_dbscan_comparison.sh` and `run_eps_sweep.sh` if it does not exist — **no manual setup needed**.
+- Is automatically created (with blank TBD rows) by both scripts if it does not exist — **no manual setup needed**.
 - Tracks Table 1 (main comparison) and Table 2 (ε sweep) in CoRL paper format.
 - Contains copy-paste instructions for updating `grace.tex` and `grace_appendix.tex` once all rows are filled.
 
-After running both scripts, open `perception_detection_results.txt` and copy the filled values into the LaTeX tables.
+After running both scripts, open `results/perception_detection_results.txt` and copy the filled values into the LaTeX tables.
 
 ---
 

@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# run_eps_sweep.sh
+# scripts/run_eps_sweep.sh
 #
 # Runs the full DBSCAN epsilon sweep (all eps values, both feature modes) and
-# records each result automatically into perception_detection_results.txt
+# records each result automatically into results/perception_detection_results.txt
 # (replaces TBD rows as results come in).
 #
-# After this script completes, perception_detection_results.txt has all
+# After this script completes, results/perception_detection_results.txt has all
 # Table 2 (appendix) rows filled. Copy the values into grace_appendix.tex
 # to replace the \tbd{} cells.
 #
-# Usage:
-#   bash run_eps_sweep.sh                    # normal run (~5-10 min)
-#   bash run_eps_sweep.sh --n-test 0         # full test set (very slow)
-#   bash run_eps_sweep.sh --no-cuda          # force CPU
+# Usage (run from anywhere in the repo):
+#   bash scripts/run_eps_sweep.sh                    # normal run (~5-10 min)
+#   bash scripts/run_eps_sweep.sh --n-test=1000      # fewer samples (faster)
+#   bash scripts/run_eps_sweep.sh --n-test=0         # full test set (very slow)
+#   bash scripts/run_eps_sweep.sh --no-cuda          # force CPU
 
 set -euo pipefail
 
-RECORD="perception_detection_results.txt"
+# Always run from repo root regardless of where the script is called from
+cd "$(dirname "$0")/.."
+
+RECORD="results/perception_detection_results.txt"
 N_TEST=2000   # test samples per eps (increase for more precise results)
 EXTRA_ARGS="" # pass through any extra flags (e.g. --no-cuda)
 
@@ -28,10 +32,13 @@ for arg in "$@"; do
     esac
 done
 
+# ── Auto-create results record file if missing ────────────────────────────────
+mkdir -p results
 if [ ! -f "$RECORD" ]; then
     echo ">>> $RECORD not found — creating it now..."
     python - <<'PYEOF'
 import os
+os.makedirs("results", exist_ok=True)
 content = """\
 ================================================================================
 GRACE — Group Detection Results Record
@@ -50,7 +57,7 @@ Metrics:
 ────────────────────────────────────────────────────────────────────────────────
 TABLE 1 — MAIN COMPARISON  (CoRL main paper / grace.tex)
 ────────────────────────────────────────────────────────────────────────────────
-Run command:  bash run_dbscan_comparison.sh
+Run command:  bash scripts/run_dbscan_comparison.sh
 
 Method                              F1     Prec   Recall   ARI    AUROC
 ────────────────────────────────────────────────────────────────────────────────
@@ -67,7 +74,7 @@ Phase 2: enc.+GNN (GRACE backbone) TBD    TBD    TBD      TBD    TBD
 ────────────────────────────────────────────────────────────────────────────────
 TABLE 2 — DBSCAN EPSILON SWEEP  (CoRL appendix / grace_appendix.tex)
 ────────────────────────────────────────────────────────────────────────────────
-Run command:  bash run_eps_sweep.sh
+Run command:  bash scripts/run_eps_sweep.sh
 
                                      F1     Prec   Recall   ARI
 ────────────────────────────────────────────────────────────────────────────────
@@ -111,9 +118,9 @@ HISTORY OF RUNS
 ────────────────────────────────────────────────────────────────────────────────
 ================================================================================
 """
-with open("perception_detection_results.txt", "w") as f:
+with open("results/perception_detection_results.txt", "w") as f:
     f.write(content)
-print("Created perception_detection_results.txt")
+print("Created results/perception_detection_results.txt")
 PYEOF
 fi
 
