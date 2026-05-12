@@ -48,21 +48,21 @@ Run command (one row at a time):
                                      F1     Prec   Recall   ARI
 ────────────────────────────────────────────────────────────────────────────────
 [DBSCAN — position only]
-  eps = 0.5                         TBD    TBD    TBD      TBD
-  eps = 0.8                         TBD    TBD    TBD      TBD
-  eps = 1.0                         TBD    TBD    TBD      TBD
-  eps = 1.2                         TBD    TBD    TBD      TBD
+  eps = 0.5                         0.000  0.200  0.000    0.000
+  eps = 0.8                         0.008  0.348  0.004    0.003
+  eps = 1.0                         0.115  0.428  0.066    0.057
+  eps = 1.2                         0.269  0.335  0.225    0.137
   eps = 1.5  ← val-sweep best       0.314  0.261  0.395   0.149
-  eps = 2.0                         TBD    TBD    TBD      TBD
-  eps = 2.5                         TBD    TBD    TBD      TBD
+  eps = 2.0                         0.312  0.214  0.577    0.117
+  eps = 2.5                         0.307  0.195  0.723    0.078
 
 [DBSCAN — position + velocity (vel_scale=0.5)]
-  eps = 0.5                         TBD    TBD    TBD      TBD
-  eps = 0.8                         TBD    TBD    TBD      TBD
-  eps = 1.0                         TBD    TBD    TBD      TBD
-  eps = 1.2                         TBD    TBD    TBD      TBD
-  eps = 1.5                         TBD    TBD    TBD      TBD
-  eps = 2.0                         TBD    TBD    TBD      TBD
+  eps = 0.5                         0.000  0.333  0.000    0.000
+  eps = 0.8                         0.005  0.481  0.003    0.003
+  eps = 1.0                         0.103  0.672  0.056    0.065
+  eps = 1.2                         0.276  0.544  0.185    0.194
+  eps = 1.5                         0.361  0.415  0.319    0.267
+  eps = 2.0                         0.379  0.327  0.450    0.300
   eps = 2.5  ← val-sweep best       0.379  0.285  0.566   0.310
 
 [Ours — GroupDetector (for reference)]
