@@ -32,7 +32,7 @@ class Policy(nn.Module):
             base = STGAN
         elif base == 'gram_v2':
             base = GRAMV2Network
-        elif base == 'grace':
+        elif base in ('grace', 'gram_map'):   # gram_map: backward-compat alias for stageA/B/C
             base = GRACENetwork
         else:
             raise NotImplementedError
