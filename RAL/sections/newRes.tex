@@ -1,0 +1,146 @@
+\section{RESULTS AND ANALYSIS}
+
+
+\subsection{Overall Performance Comparison}
+
+\begin{table*}[t]
+\caption{Performance comparison with and without TAGA across 500 test episodes}
+\label{table:main-results}
+\centering
+\begin{tabular}{lcccccc}
+\hline
+\textbf{Method} & \textbf{SR↑} & \textbf{CR↓} & \textbf{TR↓} & \textbf{GCR↓(\%)} & \textbf{NT(s)} & \textbf{PL(m)} \\
+\hline
+AG-RL & 0.78 & 0.20 & 0.02 & 10.54 & 15.47 & 21.54 \\
+AG-RL+TAGA & \textbf{0.82} & \textbf{0.16} & \textbf{0.02} & 8.82 & 16.79 & 22.68 \\
+% $\Delta$ Improvement & +5.1\% & -20.0\% & 0\% & -16.3\% & +8.5\% & +5.3\% \\
+\hline
+DS-RNN & 0.64 & 0.32 & 0.04 & 9.87 & 17.23 & 22.15 \\
+DS-RNN+TAGA & 0.66 & 0.29 & 0.05 & 4.13 & 18.45 & 23.87 \\
+% $\Delta$ Improvement & +3.1\% & -9.4\% & +25\% & -58.2\% & +7.1\% & +7.8\% \\
+\hline
+ORCA & 0.55 & 0.33 & 0.12 & 7.31 & 26.78 & 20.23 \\
+ORCA+TAGA & 0.59 & 0.35 & 0.06 & \textbf{4.18} & 27.85 & 21.50 \\
+% $\Delta$ Improvement & 6.8\% & 5.7\% & +100\% & -42.8\% & +4.0\% & +6.3\% \\
+\hline
+SF & 0.27 & 0.55 & 0.18 & 6.28 & 29.56 & 21.36 \\
+SF+TAGA & 0.29 & 0.53 & 0.18 & 4.22 & 30.12 & 22.14 \\
+% $\Delta$ Improvement & +7.4\% & -3.6\% & 0\% & -32.8\% & +1.9\% & +3.7\% \\
+\hline
+\end{tabular}
+\end{table*}
+
+Table \ref{table:main-results} demonstrates TAGA's effectiveness across diverse navigation methods. Three key findings emerge:
+
+\textbf{(1) Significant GCR Reduction}: TAGA reduces group intrusions by 16-58\% across all methods while maintaining GCR as an independent continuous metric. Unlike terminal states (SR+CR+TR=1), GCR measures the percentage of navigation time within group boundaries, providing nuanced assessment of social compliance.
+
+\textbf{(2) Enhanced Safety}: The hierarchical safety controller successfully balances group avoidance with individual collision prevention. AG-RL+TAGA achieves the best overall performance with improved success rate (78\%→82\%) and reduced collision rate (20\%→16\%), demonstrating that group awareness enhances rather than compromises navigation safety.
+
+\textbf{(3) Reasonable Trade-offs}: The 1-2 second increase in navigation time and 1-2 meter path extension represent the cost of socially compliant behavior—a worthwhile investment for respectful human-robot interaction.
+
+\subsection{Comparison with Geometric Group-Aware Methods}
+\UT{Try to address the 5th review of reviwer 31281}
+\begin{table}[t]
+\caption{TAGA versus traditional geometric group-aware approaches}
+\label{table:geometric}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\hline
+\textbf{Method} & \textbf{SR} & \textbf{CR} & \textbf{TR} & \textbf{GCR} & \textbf{Type} \\
+\hline
+Zone-Based & 0.30 & 0.20 & 0.50 & 12.34\% & Repulsion \\
+F-Formation & 0.41 & 0.48 & 0.11 & 13.12\% & Zones \\
+ORCA & 0.55 & 0.33 & 0.12 & 7.31\% & Reactive \\
+ORCA+TAGA & 0.59 & 0.35 & 0.06 & 4.18\% & Tangent \\
+\hline
+\end{tabular}
+\end{table}
+
+To contextualize TAGA's contributions, we implemented two representative geometric group-aware methods (Table \ref{table:geometric}):
+
+\textbf{Zone-Based Avoidance} \UT{address the issue of reviewer Review31289} creates graduated repulsive fields with strength inversely proportional to distance from group boundaries. While conceptually simple, this approach suffers from fundamental limitations: overlapping repulsive fields in dense scenarios create impassable barriers, cumulative forces often overpower goal attraction causing oscillation without progress, and parameter tuning doesn't generalize across scenarios. 
+
+\textbf{F-Formation Avoidance} implements Kendon's proxemic zones—O-space (center, forbidden), P-space (personal, avoid), and R-space (rear, traversable). Despite sophisticated social modeling, it fails in dynamic environments because rigid zone definitions cannot adapt to splitting/merging groups, and moving groups violate static F-formation assumptions.
+
+TAGA's fundamental advantage lies in computing guided tangent paths rather than relying on repulsion or templates, enabling consistent progress through complex group configurations where geometric methods fail.
+
+\subsection{Robustness Across Diverse Scenarios}
+
+\begin{table}[t]
+\caption{Scenario-specific evaluation demonstrating TAGA's adaptability}
+\label{table:scenarios}
+\centering
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{llcccc}
+\hline
+\textbf{Scenario} & \textbf{Method} & \textbf{SR} & \textbf{CR} & \textbf{GCR} & \textbf{Reduction} \\
+\hline
+\multirow{2}{*}{Dense} 
+& ORCA & 0.45 & 0.42 & 12.3\% & \multirow{2}{*}{45.5\%}\\
+& +TAGA & 0.52 & 0.38 & 6.7\% & \\
+\hline
+\multirow{2}{*}{Mixed}
+& ORCA & 0.59 & 0.35 & 7.3\% & \multirow{2}{*}{42.5\%}\\
+& +TAGA & 0.61 & 0.32 & 4.2\% & \\
+\hline
+\multirow{2}{*}{Dynamic}
+& ORCA & 0.51 & 0.39 & 8.9\% & \multirow{2}{*}{42.7\%}\\
+& +TAGA & 0.54 & 0.36 & 5.1\% & \\
+\hline
+\multirow{2}{*}{Crossing}
+& ORCA & 0.48 & 0.41 & 9.2\% & \multirow{2}{*}{47.8\%}\\
+& +TAGA & 0.53 & 0.37 & 4.8\% & \\
+\hline
+\multirow{2}{*}{Groups Only}
+& ORCA & 0.43 & 0.45 & 15.2\% & \multirow{2}{*}{52.0\%}\\
+& +TAGA & 0.48 & 0.41 & 7.3\% & \\
+\hline
+\end{tabular}
+\end{table}
+
+Table \ref{table:scenarios} validates TAGA's robustness across the diverse scenarios requested by reviewers. Maximum GCR reduction occurs in groups-only (52.0\%) and dense scenarios (45.5\%) where group awareness proves most critical. Consistent improvements across all scenarios—including challenging dynamic and crossing configurations—demonstrate TAGA's adaptability to varied group behaviors.
+
+The dense groups scenario particularly highlights TAGA's value: while baseline ORCA achieves only 45\% success rate due to frequent group intrusions causing social deadlocks, TAGA's tangent navigation improves success to 52\% while reducing GCR by 45.5\%. Even in dynamic scenarios where groups continuously change formation, TAGA maintains robust performance improvements.
+
+\subsection{Ablation Study: Safety Controller Validation}
+\UT{Try to address the 6th review of reviwer 31281}
+
+\begin{table}[t]
+\caption{Hierarchical safety controller component analysis}
+\label{table:ablation}
+\centering
+\small
+\begin{tabular}{lccc}
+\hline
+\textbf{Configuration} & \textbf{SR} & \textbf{CR} & \textbf{GCR(\%)} \\
+\hline
+Baseline (AG-RL only) & 0.78 & 0.20 & 10.54 \\
+TAGA without safety & 0.71 & 0.27 & \textbf{7.23} \\
+TAGA with critical zone only & 0.76 & 0.22 & 8.15 \\
+TAGA with full safety & \textbf{0.82} & \textbf{0.16} & 8.82 \\
+\hline
+\end{tabular}
+\end{table}
+
+Table \ref{table:ablation} addresses reviewer concerns about individual collision safety during group maneuvers. Without the safety controller, TAGA reduces group intrusions but increases individual collisions (27\% CR), confirming the reviewer's hypothesis. The critical zone alone provides partial improvement, but the full three-zone controller achieves optimal balance between group avoidance and individual safety, validating our hierarchical design.
+
+\subsection{Computational Efficiency}
+
+TAGA's modular design ensures practical deployment with minimal overhead:
+\begin{itemize}
+\item Group detection (DBSCAN): 3.2ms per frame
+\item Tangent computation: 0.8ms per detected group  
+\item Safety validation: 1.5ms for all visible humans
+\item Total overhead: ~5.5ms, maintaining 10Hz real-time operation
+\end{itemize}
+
+This efficiency, combined with no retraining requirements, enables immediate integration with existing robotic systems—a critical advantage over learning-based group-aware methods requiring model retraining or extensive parameter tuning like geometric approaches.
+
+\subsection{Qualitative Insights}
+
+\UT{Try to address the 2nd review of reviwer 31289}Figure \ref{fig:sim-com} illustrates the behavioral transformation TAGA provides. While baseline methods treat groups as collections of individuals—often attempting to exploit perceived gaps—TAGA recognizes and respects group boundaries through tangent navigation. The marginal increase in path length represents socially appropriate detours rather than inefficiency, trading minor time costs for significant improvements in human comfort and social acceptance.
+
+Notably, the performance variations across methods reveal interesting insights: learning-based methods (AG-RL, DS-RNN) show better baseline group handling due to implicit pattern learning, yet still benefit significantly from explicit TAGA guidance. Reactive methods (ORCA, SF) demonstrate larger relative improvements, suggesting that geometric group awareness effectively compensates for their lack of learned social behaviors.

@@ -1,0 +1,92 @@
+\section{BACKGROUND AND RELATED WORK}
+
+\subsection{Human Group Modeling in Crowd-Robot Simulation Frameworks}
+
+Recent studies have expanded human-aware robot navigation to account for both static and dynamic social groups \cite{group-aware}, where static groups are defined as individuals who stay spatially close with minimal movement, while dynamic groups move together toward a common goal. Prior research has explored group interactions based on size and formation \cite{kato2015may} and investigated intra-group coherence \cite{luber2013multi,taylor2020robot} and inter-group differences \cite{shao2014scene} to improve trajectory prediction \cite{unhelkar2015human}. However, these approaches typically require explicit group structure definitions or extensive training data, limiting their adaptability to diverse real-world scenarios.
+
+Machine learning has significantly advanced human-aware robot navigation. RNNs \cite{alahi2016social} have been used for human motion prediction \cite{bisagno2018group}, while RL methods, including inverse RL \cite{kretzschmar2016socially} and DRL \cite{chen2019relational}, have improved socially compliant navigation. Attention-based DRL has further enhanced interaction modeling in crowded settings \cite{chen2019crowd,chen2017decentralized}. However, these learning-based approaches suffer from three critical limitations: (1) they require extensive retraining when group dynamics change, (2) they cannot easily integrate with existing navigation systems, and (3) they typically assume perfect group membership knowledge rather than addressing real-time detection challenges \cite{gao2022evaluation}.
+
+% \SR{(}
+% A recent work \cite{group-aware} addressed group modeling using convex hulls for group representation, but their approach relies on reinforcement learning penalties and assumes groups move uniformly in the same direction. This limits adaptability to real-world scenarios where groups exhibit diverse behaviors—static conversation circles, dynamically splitting clusters, or mixed formations with varying velocities. Additionally, their evaluation metric treats group collisions as terminal states, preventing nuanced assessment of navigation quality.\SR{)} \SR{You already discussed \cite{group-aware} extensively in the introduction. This feels repetitive. Add new technical details not mentioned in intro (e.g., specific network architecture, reward formulation, training requirements)}
+
+% Done by uk
+Recently, Katyal \textit{et al.}~\cite{group-aware} introduced a reinforcement learning framework that models group boundaries as convex hulls and penalizes intrusions through a custom reward function integrated into a PPO-based navigation policy. 
+While effective under static group structures, their model assumes uniform group motion and requires retraining to adapt to new group configurations, limiting its deployment in dynamic crowds.
+% Done by maam
+To address these fundamental limitations in group detection, modeling flexibility, and evaluation, we develop TAGA as a modular enhancement compatible with diverse navigation methods, as detailed in Section~\ref{sec:methods}.
+% \SR{(}In contrast to these limitations, we present three key innovations. First, leveraging the framework from \cite{liu2023intention}, we create a simulation environment that models realistic group behaviors including leader-follower dynamics, dynamic formation changes, and mixed static-dynamic groups. Second, unlike learning-based methods that require retraining, our TAGA mechanism operates as a modular plug-in that enhances any existing navigation method without modification. Third, we introduce GCR as a continuous metric measuring the percentage of time spent in group spaces, providing more granular evaluation than binary collision states. \SR{)} \SR{Highly repetitive to your contribution list. Better exclude this paragraph.}
+
+
+
+\subsection{Navigation Methods for Human Group Avoidance}
+
+Robot navigation in crowded environments has evolved through two primary paradigms: reaction-based and learning-based methods. Reaction-based models like ORCA \cite{orca} and Social Force \cite{helbing1995social} use mathematical formulations for collision avoidance. ORCA computes velocity obstacles for guaranteed collision-free paths but treats all agents equally, leading to socially inappropriate behaviors like cutting through groups. The Social Force model incorporates attractive and repulsive forces \cite{ferrer2013robot} but struggles with parameter tuning for different group densities and formations. Extended Social Force variants \cite{zanlungo2011social} have attempted to model group coherence, but remain limited to predefined group structures.
+
+Learning-based approaches have shown promise in capturing complex crowd dynamics. DS-RNN \cite{liu2020decentralized} uses structural-RNN to model spatio-temporal relationships, while AG-RL \cite{liu2023intention} employs attention mechanisms for intention prediction. SARL \cite{chen2019crowd} introduces social attention for multi-agent interactions, and recent graph neural network approaches \cite{wang2023learning} model relational structures in crowds. However, these methods fundamentally treat humans as individuals with pairwise interactions, lacking explicit group-level understanding.
+
+Recent group-aware methods attempt to bridge this gap through various approaches. Wang et al. \cite{wang2023learning} propose SNGNN using graph neural networks to model group relationships, but require extensive training on group-specific datasets. Nishimura et al. \cite{nishimura2022comet} introduce CoMet, modeling group cohesion forces through learned parameters that must be tuned for different environments.
+% Done by Ma'am
+These training and tuning requirements limit rapid deployment across different venues (hospitals vs. malls vs. airports) where crowd dynamics vary significantly. % End here 
+Bisagno et al. \cite{bisagno2018group} use LSTM networks for group trajectory prediction but focus on prediction rather than navigation. Geometric approaches like SEAN 2.0 \cite{tsoi2023sean} model F-formations with O-space, P-space, and R-space zones \cite{kendon1990conducting}, but require predefined spatial configurations that may not generalize to dynamic groups.
+
+Our TAGA approach fundamentally differs from these methods in three ways. First, while existing methods require either extensive training (learning-based) or rigid geometric rules (zone-based), TAGA dynamically computes tangent trajectories based on real-time group detection without predefined parameters. Second, unlike methods that replace existing navigation systems, TAGA operates as a conditional module that activates only when groups are detected, preserving the original navigation performance for individual interactions. Third, TAGA's modular design allows integration with any navigation method—reactive or learned—without retraining, demonstrated through successful integration with ORCA, Social Force, DS-RNN, and AG-RL.
+
+\subsection{Evaluation Metrics and Benchmarking}
+
+Existing evaluation metrics for socially-aware navigation primarily focus on individual interactions. Success Rate (SR), Collision Rate (CR), and Timeout Rate (TR) measure terminal states \cite{gao2022evaluation}, while path efficiency and comfort distance assess trajectory quality \cite{mavrogiannis2023core}. For group-aware navigation, prior work \cite{group-aware} treats group collisions as terminal failures, conflating them with individual collisions and preventing nuanced evaluation of group interaction quality.
+
+% Social compliance metrics have attempted to capture group awareness through indirect measures. Pedestrian discomfort \cite{trautman2015robot} estimates psychological comfort but lacks direct group boundary assessment. Personal space invasion metrics \cite{kirby2009companion} consider individual zones but not collective group spaces. The Social Individual Index \cite{truong2017toward} measures disruption to social conversations but requires knowing conversation states. \SR{This para sounds somewhat mechanical. You're  following a template of "Metric X does Y but lacks Z" three times in a row. While the critiques are valid, the paragraph would be stronger if you synthesized these limitations into a broader insight.}
+
+% \SR{Check the following revised para. Feel free to modify.}
+% Done by Ma'am
+Existing social compliance metrics attempt to capture group awareness through indirect measures such as pedestrian discomfort~\cite{trautman2015robot}, personal space invasion~\cite{kirby2009companion}, and conversation disruption~\cite{truong2017toward}. However, these approaches either rely on proxy measures like psychological comfort rather than direct spatial assessment, focus on individual rather than collective group zones, or require additional context such as conversation states that may not be observable. Consequently, they cannot directly quantify the core behavior of interest: the amount of time a robot spends occupying group spaces during navigation.
+% We introduce Group Collision Rate (GCR) as an independent continuous metric that directly measures the percentage of navigation time spent within detected group boundaries. GCR provides granular assessment throughout episodes, enabling distinction between brief necessary intrusions and prolonged inappropriate occupancy of group spaces. This metric operates independently of terminal states (maintaining SR + CR + TR = 1) while providing actionable feedback for improving group-aware behaviors. Our comprehensive evaluation across diverse scenarios—dense groups, mixed populations (50\% grouped, 50\% individual), dynamic formations, and groups-only environments—demonstrates TAGA's consistent performance improvements across varying crowd compositions. \SR{This para on GCR also sounds repetitive. Rewrite.}
+% Done by me
+In all experiments, we report the Group Collision Rate (GCR) together with SR, CR, and TR as a continuous indicator of group intrusions during navigation.
+
+
+
+
+
+
+
+
+
+% \section{BACKGROUND AND RELATED WORK}
+
+% \subsection{Human Group Modeling in Crowd-Robot Simulation Frameworks}
+
+% Recent studies have expanded human-aware robot navigation to account for both static and dynamic social groups \cite{group-aware}, where static groups are defined as individuals who stay spatially close with minimal movement, while dynamic groups move together toward a common goal. Prior research has explored group interactions based on size and formation \cite{kato2015may} and investigated intra-group coherence \cite{luber2013multi,taylor2020robot} and inter-group differences \cite{shao2014scene} to improve trajectory prediction \cite{unhelkar2015human}. However, dynamic groups often lack structured formations, requiring adaptive strategies for effective navigation.
+
+% Machine learning has significantly advanced human-aware robot navigation. RNNs \cite{alahi2016social} have been used for human motion prediction \cite{bisagno2018group}, while RL methods, including inverse RL \cite{kretzschmar2016socially} and DRL \cite{chen2019relational}, have improved socially compliant navigation. Attention-based DRL has further enhanced interaction modeling in crowded settings \cite{chen2019crowd,chen2017decentralized}. However, most approaches focus on individual interactions, with limited emphasis on explicit group modeling \cite{gao2022evaluation}. A prior work \cite{group-aware} addressed this by using convex hulls instead of F-formations \cite{chen2019relational} for group representation, but it relies on predefined structures and RL-based penalties, making it less adaptable to dynamic environments. Additionally, it overlooks individual interactions and lacks a robust evaluation metric for group-aware navigation.
+
+% In contrast, leveraging the framework from \cite{liu2023intention}, we integrated human groups alongside individual dynamic humans for a more realistic crowd simulation. To assess group-aware navigation, we compare our model with state-of-the-art frameworks. Existing metrics primarily penalize group intersections or measure pedestrian discomfort \cite{group-aware}, offering only indirect assessments of social compliance. To address this, we propose GCR, a more robust metric that directly quantifies a robot’s ability to avoid intruding into human groups, ensuring a precise and continuous evaluation across different models.
+
+% % \vspace{-2pt}
+% \subsection{Navigation Methods for Human Group Avoidance}
+
+% Robot navigation in crowded environments requires safe and efficient interaction with both individuals and human groups. Traditional approaches fall into reaction-based and learning-based methods. Reaction-based models like ORCA \cite{orca} and SF \cite{helbing1995social} use predefined mathematical rules for collision avoidance. ORCA enables fast trajectory adjustments but ignores social norms, often leading to group intrusions. The SF Model incorporates interaction forces but struggles with dynamically changing groups. Overall, these methods lack the adaptability required for complex, human-centric environments.
+
+% % Previously it was included
+% Learning-based methods, including DS-RNN \cite{liu2020decentralized} and AG-RL \cite{liu2023intention}, leverage deep reinforcement learning to model crowd interactions. DS-RNN captures spatio-temporal relationships but focuses on individual-based interactions rather than structured group behaviors. AG-RL predicts human intentions using attention-based interaction graphs but does not explicitly differentiate human groups, leading to suboptimal group avoidance. To overcome this issue, a recent group-aware navigation model\cite{group-aware}, define groups using convex hulls and penalize group intrusions. However, they assume groups move in the same direction and lack adaptability for static or mixed groups. In contrast, our proposed TAGA navigation model can dynamically adjust robot trajectories based on detected human groups, whether they are static or mixed, and integrate with existing frameworks for improved navigation. 
+% Learning-based methods, such as DS-RNN \cite{liu2020decentralized} and AG-RL \cite{liu2023intention}, utilize deep reinforcement learning to model crowd interactions. DS-RNN captures spatio-temporal relationships but focuses on individual interactions rather than structured group behaviors. AG-RL employs attention-based interaction graphs to predict human intentions but does not explicitly differentiate human groups, leading to suboptimal group avoidance. A recent group-aware approach \cite{group-aware} defines groups using convex hulls and penalizes intrusions but assumes groups move in the same direction, limiting adaptability for static or mixed groups. In contrast, our proposed TAGA model dynamically adjusts robot trajectories based on detected human groups, regardless of their movement patterns, while seamlessly integrating with existing frameworks for improved navigation.
+
+
+
+
+
+
+
+
+
+
+% To address these limitations, we propose TAGA, a reactive group-aware navigation model that dynamically adjusts robot trajectories based on detected human groups. Unlike prior approaches, TAGA enables real-time adaptation, integrates with existing frameworks, and introduces Group Collision Rate (GCR) as a new evaluation metric to measure group intrusion performance.
+
+
+
+
+% \subsection{Benchmarking Group-Aware Navigation and Evaluation Metrics}
+
+% \textit{Recent group-aware navigation methods can be categorized into learning-based and geometric approaches. Wang et al. [2023] propose SNGNN, using graph neural networks to model group relationships but requiring extensive training. Nishimura et al. [2022] introduce CoMet, modeling group cohesion forces through learned parameters. Bisagno et al. [2021] use LSTM networks for group trajectory prediction. These methods require training on group-specific datasets and cannot be easily integrated with existing navigation systems.
+% In contrast, geometric approaches like SEAN 2.0 [Tsoi et al., 2023] use F-formations for group representation but require predefined group structures. Our TAGA method differs by being modular, requiring no training, and capable of enhancing any existing navigation method with group awareness. We compare TAGA against two group-aware baselines: (1) Zone-based avoidance, which creates larger repulsive zones around detected groups, and (2) F-formation avoidance inspired by SEAN 2.0 [Tsoi et al., 2023], which models the O-space, P-space, and R-space of human group formations. Unlike these methods that use predefined geometric rules, TAGA dynamically computes tangent trajectories while maintaining modularity with existing navigation methods
+% }
