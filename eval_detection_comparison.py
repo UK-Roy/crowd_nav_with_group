@@ -324,7 +324,7 @@ def _ascii_table(rows):
 
     print()
     print("=" * W)
-    print("  GROUP DETECTION COMPARISON  (test set)        [CoRL 2026]")
+    print("  GROUP DETECTION COMPARISON  (test set)")
     print("=" * W)
     print(hdr)
     print(sep)
