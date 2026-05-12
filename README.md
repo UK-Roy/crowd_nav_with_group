@@ -155,58 +155,73 @@ All outputs are saved to `ablation_figures/`.
 ## Group Detection: DBSCAN vs Perception Module
 
 Validates GRACE's GroupDetector backbone against DBSCAN in isolation, independent of the navigation policy.
-Results feed directly into the CoRL paper (main paper Table~2 and Appendix §A.2).
-All results are recorded in `perception_detection_results.txt`.
+Results feed into two CoRL tables. All values are recorded in `perception_detection_results.txt`.
 
-### Full pipeline (data collection → final comparison)
+| Table | Location in paper | What it shows |
+|---|---|---|
+| **Table 1** | `grace.tex` §5.2 | Best-eps DBSCAN vs GroupDetector Phase1 vs Phase2 |
+| **Table 2** | `grace_appendix.tex` §A.2 | DBSCAN across all ε values (both feature modes) |
 
-**Step 0 — Collect rollout data** (only needed if `gram_v2_data/` is missing):
+---
+
+### Replicate Table 1 — Main comparison (grace.tex §5.2)
+
+**Normal path** — checkpoints and `results.pt` files already exist:
 ```bash
-python gram_v2_collect_data.py          # collects ~30k frames into gram_v2_data/
+bash run_dbscan_comparison.sh
+```
+Runs in ~30 s. Prints ASCII + LaTeX table. Copy LaTeX into `grace.tex` Table 2.
+
+**Force re-evaluation** — re-run model inference from checkpoint (ignores saved results.pt):
+```bash
+bash run_dbscan_comparison.sh --force
 ```
 
-**Step 1 — Train the perception modules** (only needed if checkpoints are missing):
+**Full rebuild from scratch** — checkpoints missing or need to retrain:
 ```bash
-# Phase 1: encoder + edge network (no GNN)
+# 1. Collect rollout data (only if gram_v2_data/ is missing)
+python gram_v2_collect_data.py
+
+# 2. Train Phase 1 (encoder, no GNN)
 python gram_v2_train_phase1.py --variant B \
     --save trained_models/gram_v2/phase1_v2/B
 
-# Phase 2: encoder + GNN (= GRACE backbone)
+# 3. Train Phase 2 (encoder + GNN = GRACE backbone)
 python gram_v2_train_phase2.py \
     --phase1 trained_models/gram_v2/phase1_v2/B/best.pt \
     --save trained_models/gram_v2/phase2_v2
+
+# 4. Regenerate results.pt from the trained checkpoints
+bash run_perception_eval.sh
+
+# 5. Run comparison
+bash run_dbscan_comparison.sh
 ```
 
-**Step 2 — Evaluate checkpoints** (regenerate `results.pt` from existing checkpoints):
+---
+
+### Replicate Table 2 — DBSCAN ε sweep (grace_appendix.tex §A.2)
+
+**Fastest — fill all rows at once** (~60 s, evaluates on 2000 test samples per eps):
 ```bash
-bash run_perception_eval.sh             # evaluates both Phase1 and Phase2
-bash run_perception_eval.sh --phase2-only   # Phase2 (GRACE backbone) only
-```
-
-**Step 3 — Run the full comparison** (main paper table: best-eps DBSCAN vs our modules):
-```bash
-bash run_dbscan_comparison.sh           # uses saved results.pt (fast, ~30s)
-bash run_dbscan_comparison.sh --force   # re-runs model inference from scratch
-```
-Prints ASCII + LaTeX table. Copy LaTeX into `grace.tex` Table~2.
-
-### Getting DBSCAN results for specific ε values (appendix table)
-
-The CoRL appendix (§A.2) shows DBSCAN results for every ε. Fill rows one at a time:
-
-```bash
-# Full sweep — fastest way to fill the whole appendix table at once:
 python eval_detection_comparison.py --eps-sweep-only --n-test 2000
+```
+Prints a table of F1/Prec/Recall/ARI for every ε (0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5)
+for both position-only and pos+vel modes. Copy values into `perception_detection_results.txt`,
+then paste into `grace_appendix.tex` Table A2.
 
-# Single ε row — position only:
+**One row at a time** — position-only mode:
+```bash
 python eval_detection_comparison.py --fixed-eps 0.5  --mode position --dbscan-only
 python eval_detection_comparison.py --fixed-eps 0.8  --mode position --dbscan-only
 python eval_detection_comparison.py --fixed-eps 1.0  --mode position --dbscan-only
 python eval_detection_comparison.py --fixed-eps 1.2  --mode position --dbscan-only
 python eval_detection_comparison.py --fixed-eps 2.0  --mode position --dbscan-only
 python eval_detection_comparison.py --fixed-eps 2.5  --mode position --dbscan-only
+```
 
-# Single ε row — position + velocity:
+**One row at a time** — position + velocity mode:
+```bash
 python eval_detection_comparison.py --fixed-eps 0.5  --mode pos+vel --dbscan-only
 python eval_detection_comparison.py --fixed-eps 0.8  --mode pos+vel --dbscan-only
 python eval_detection_comparison.py --fixed-eps 1.0  --mode pos+vel --dbscan-only
@@ -215,9 +230,12 @@ python eval_detection_comparison.py --fixed-eps 1.5  --mode pos+vel --dbscan-onl
 python eval_detection_comparison.py --fixed-eps 2.0  --mode pos+vel --dbscan-only
 ```
 
-Copy each result into `perception_detection_results.txt` → then update the appendix LaTeX table.
+After each run: copy the printed F1/Prec/Recall/ARI into `perception_detection_results.txt`
+(Table 2 section), then replace the matching `\tbd{}` in `grace_appendix.tex`.
 
-### Results summary (confirmed 2026-05-12)
+---
+
+### Confirmed results (2026-05-12)
 
 | Method | F1 | Prec | Recall | ARI |
 |---|---|---|---|---|
