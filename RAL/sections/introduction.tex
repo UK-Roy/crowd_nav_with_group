@@ -92,29 +92,27 @@ Recent attempts to incorporate group awareness into robot navigation have shown 
 Our study makes the following key contributions:
 
 \begin{enumerate}
-    \item \textbf{Real-time group detection.} D
-    We develop a DBSCAN-based module that enables real-time identification of human groups from observable motion cues such as position, velocity, and proximity. 
-    Unlike prior methods that assume pre-labeled group membership, our approach dynamically detects, updates, and dissolves group formations as they evolve, addressing a critical gap in socially compliant robot navigation.
+    \item \textbf{Real-time group detection.}
+    We develop a DBSCAN-based module that identifies human groups online from observable motion cues (position, velocity, proximity), without assuming pre-labeled group membership.
+    The module dynamically detects, updates, and dissolves group formations as they evolve, addressing a fundamental gap in practical socially compliant navigation.
 
-    \item \textbf{Group-aware tangent navigation (TAGA).} \UT{Try to address the 2nd review of reviwer 31281}
-    We propose TAGA, a modular group-avoidance mechanism that computes tangent trajectories around detected groups while ensuring individual safety. 
-    TAGA integrates seamlessly with existing navigation frameworks (both reactive and learning-based) without retraining, and consistently improves social compliance while preserving navigation efficiency.
+    \item \textbf{Group-aware tangent navigation (TAGA).}
+    We propose TAGA, a modular group-avoidance mechanism that computes tangent trajectories around detected group boundaries while maintaining individual safety.
+    TAGA integrates with existing reactive and learning-based navigation frameworks without retraining, acting as a plug-in layer that activates only when groups are present.
 
-    \item \textbf{Hierarchical safety control.} 
-    We design a hierarchical safety controller that maintains graded safety zones around both individuals and groups, enabling robots to execute tangent maneuvers safely even in dense, mixed populations. 
-    This controller provides robust, low-level safety during cooperative group-aware navigation.
+    \item \textbf{Hierarchical safety control.}
+    We design a three-zone safety controller (critical, warning, comfort) that coordinates group-level tangent maneuvers with individual collision avoidance in dense, mixed-population scenarios.
 
-    \item \textbf{Enhanced simulation and benchmarking framework.} 
-    We extend the crowd simulation environment to model realistic group dynamics, including clustering behaviors, leader–follower patterns, and dynamic group formations. 
-    This framework supports reproducible benchmarking across varying densities, group ratios, and motion patterns.
+    \item \textbf{Realistic crowd simulation benchmark.}
+    We introduce a benchmark environment incorporating five empirically motivated modeling phases: individual speed variation (Weidmann 1992), dynamic group speed coupling (Moussaïd 2010), F-formations for static groups (Kendon 1990), leader--follower dynamics (Helbing \& Molnár 1995), and convex-hull group boundaries.
+    This benchmark enables reproducible evaluation under crowd conditions that closely reflect real-world group behavior.
 
-    \item \textbf{Continuous evaluation metric (GCR).} \UT{Try to address the 4th review of reviwer 31281 and also mention in section IV-C}
-    We introduce the \textit{Group Collision Rate (GCR)} as a complementary metric to conventional terminal-state measures such as Success Rate (SR), Collision Rate (CR), and Timeout Rate (TR). 
-    GCR quantifies the percentage of navigation time the robot spends within group boundaries, providing continuous, frame-level assessment of social compliance throughout navigation episodes.
+    \item \textbf{Continuous group compliance metric (GCR).}
+    We introduce the \textit{Group Collision Rate (GCR)}, a continuous metric that quantifies the fraction of navigation time spent inside group boundaries, providing frame-level social compliance assessment complementary to terminal-state metrics (SR, CR, TR).
 
-    \item \textbf{Comprehensive empirical validation.} 
-    We conduct extensive benchmarking across diverse crowd scenarios—dense groups, mixed populations (50\% individuals, 50\% in groups), and dynamic formations. 
-    Integrating TAGA with established navigation methods including ORCA~\cite{orca}, Social Force~\cite{helbing1995social}, DS-RNN~\cite{liu2020decentralized}, and AG-RL~\cite{liu2023intention}, we demonstrate substantial reductions in group intrusions while maintaining or improving navigation success rates. \SR{I checked upto this point}
+    \item \textbf{Cross-method empirical study revealing reactive--learning asymmetry.}
+    We benchmark TAGA against reactive methods (ORCA~\cite{orca}, Social Force~\cite{helbing1995social}) and learning-based methods (DS-RNN~\cite{liu2020decentralized}, AG-RL~\cite{liu2023intention}, GARN), uncovering a consistent pattern: explicit group-awareness yields the largest gains for reactive methods, while highly optimized learned policies that have implicitly internalized group-avoidance behavior benefit less.
+    This finding offers concrete guidance on when modular group-awareness provides the most practical value.
 \end{enumerate}
 
 % \section{INTRODUCTION}
