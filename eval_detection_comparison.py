@@ -257,6 +257,62 @@ def _load_phase2(ckpt_path, device):
 # Table printers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _record_result(txt_path, mode, eps, metrics):
+    """
+    Write one DBSCAN result into the TBD row of perception_detection_results.txt.
+    Finds the correct section (position / pos+vel) and the matching eps line,
+    then replaces 'TBD    TBD    TBD      TBD' with actual values.
+    """
+    import re
+    if not os.path.exists(txt_path):
+        print(f"[record] {txt_path} not found — skipping.")
+        return
+
+    with open(txt_path) as f:
+        lines = f.readlines()
+
+    pos_hdr    = '[DBSCAN — position only]'
+    posvel_hdr = '[DBSCAN — position + velocity'
+    ours_hdr   = '[Ours — GroupDetector'
+    target_hdr = pos_hdr if mode == 'position' else posvel_hdr
+    eps_str    = f"{eps:.1f}"
+
+    f1  = f"{metrics['f1']:.3f}"
+    pre = f"{metrics['precision']:.3f}"
+    rec = f"{metrics['recall']:.3f}"
+    ari = f"{metrics['ari']:.3f}"
+
+    in_section = False
+    updated    = False
+    new_lines  = []
+
+    for line in lines:
+        stripped = line.rstrip('\n')
+        if target_hdr in stripped:
+            in_section = True
+        elif (pos_hdr in stripped or posvel_hdr in stripped
+              or ours_hdr in stripped) and target_hdr not in stripped:
+            in_section = False
+
+        if (in_section and not updated
+                and re.search(rf'\beps\s*=\s*{re.escape(eps_str)}\b', stripped)
+                and 'TBD' in stripped):
+            stripped = re.sub(r'TBD\s+TBD\s+TBD\s+TBD',
+                               f"{f1:<6} {pre:<6} {rec:<8} {ari}", stripped)
+            updated = True
+
+        new_lines.append(stripped + '\n')
+
+    with open(txt_path, 'w') as f:
+        f.writelines(new_lines)
+
+    if updated:
+        print(f"[record] {txt_path} updated: "
+              f"DBSCAN {mode} eps={eps_str} → F1={f1} Prec={pre} Rec={rec} ARI={ari}")
+    else:
+        print(f"[record] Row already filled or not found: DBSCAN {mode} eps={eps_str}")
+
+
 def _ascii_table(rows):
     """
     rows : list of (name, metrics_dict, note)
@@ -370,6 +426,11 @@ def main():
                         help='Print full eps sweep table for all values, skip model eval')
     parser.add_argument('--dbscan-only',  action='store_true',
                         help='Run DBSCAN only, skip model eval (use with --fixed-eps)')
+    parser.add_argument('--record-file',  default=None,
+                        metavar='PATH',
+                        help='After each result, write it into this text file '
+                             '(replaces TBD rows). Default: perception_detection_results.txt '
+                             'when --record-file is given without a value.')
     parser.add_argument('--no-latex',     action='store_true',
                         help='Skip LaTeX table output')
     parser.add_argument('--no-cuda',      action='store_true')
@@ -407,6 +468,8 @@ def main():
     modes_to_run = (['position', 'pos+vel'] if args.mode == 'both'
                     else [args.mode])
 
+    rec_path = args.record_file   # None if not given
+
     # ── Full eps sweep table (appendix mode) ──────────────────────────────────
     if args.eps_sweep_only:
         EPS_LIST = [0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5]
@@ -425,10 +488,15 @@ def main():
                          else f"DBSCAN (p+v)  eps={eps:.1f}")
                 print(f"  {label:<36} {m['f1']:5.3f}  {m['precision']:5.3f}  "
                       f"{m['recall']:5.3f}  {m['ari']:5.3f}")
+                if rec_path:
+                    _record_result(rec_path, mode, eps, m)
             print("  " + "·" * (W - 2))
         print("=" * W)
         print(f"\n  Evaluated on {n_test_str}.")
-        print("  Copy these values into perception_detection_results.txt → Appendix table.")
+        if rec_path:
+            print(f"  Results recorded in {rec_path}.")
+        else:
+            print("  Copy these values into perception_detection_results.txt → Appendix table.")
         return
 
     # ── Single fixed-eps run (one appendix row at a time) ─────────────────────
@@ -441,6 +509,8 @@ def main():
             print(f"\n[DBSCAN {mode}] eps={args.fixed_eps}  ({n_test_str})")
             print(f"  F1={m['f1']:.3f}  Prec={m['precision']:.3f}  "
                   f"Rec={m['recall']:.3f}  ARI={m['ari']:.3f}")
+            if rec_path:
+                _record_result(rec_path, mode, args.fixed_eps, m)
             rows.append((label, m, '', 'dbscan'))
         if args.dbscan_only:
             _ascii_table(rows)
