@@ -1,0 +1,162 @@
+% GRACE Architecture — clean layout with explicit coordinates
+\documentclass[tikz,border=12pt]{standalone}
+\usepackage{tikz}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage[T1]{fontenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds}
+
+\definecolor{cP}{HTML}{4C72B0}   % blue  — perception
+\definecolor{cC}{HTML}{55A868}   % green — cost map
+\definecolor{cR}{HTML}{C44E52}   % red   — planner
+\definecolor{cA}{HTML}{8172B2}   % purple — aux
+\definecolor{cG}{HTML}{444444}   % dark  — text/arrows
+
+\begin{document}
+\begin{tikzpicture}[
+  font=\sffamily\small,
+  >={Stealth[length=2.6mm,width=2mm]},
+  % ── node styles ─────────────────────────────────────────────────────
+  BLK/.style={rectangle,rounded corners=2pt,draw=#1,line width=0.7pt,
+              fill=white,minimum height=9mm,minimum width=26mm,
+              align=center,text=cG,inner sep=2.5pt},
+  BLK/.default=cG,
+  BIG/.style={rectangle,rounded corners=2.5pt,draw=#1,line width=0.8pt,
+              fill=white,minimum height=11mm,align=center,
+              text=cG,inner sep=3pt},
+  IO/.style={rectangle,rounded corners=1pt,draw=cG!80,line width=0.5pt,
+             dashed,fill=white,minimum height=8mm,minimum width=20mm,
+             align=center,text=cG,font=\sffamily\footnotesize,inner sep=2pt},
+  CH/.style={rectangle,draw=cC!70,line width=0.4pt,fill=cC!18,
+             minimum width=9mm,minimum height=8mm,
+             font=\sffamily\scriptsize,text=cG,align=center,inner sep=1pt},
+  GRP/.style={rectangle,rounded corners=5pt,draw=#1,fill=#1!8,
+              inner sep=6mm,line width=0.8pt},
+  LBL/.style={font=\sffamily\bfseries\footnotesize,text=#1,
+              anchor=north west,inner sep=3pt},
+  TL/.style={font=\sffamily\scriptsize\itshape,text=cG!80},
+  AR/.style={->,line width=0.9pt,draw=cG},
+  ARC/.style={->,line width=0.7pt,draw=cG!80},
+  AAX/.style={->,line width=0.7pt,draw=cA!85,dashed},
+]
+
+% ╔══════════════════════════════════════════════════════════════════════╗
+% ║  ROW 1 — Perception backbone  (y = 0)                              ║
+% ╚══════════════════════════════════════════════════════════════════════╝
+\node[IO]               (obs)  at (  0,  0) {\textbf{Crowd Obs}\\[-1pt]$\mathcal{O}_t{=}\{p_i,v_i\}_{i=1}^N$};
+\node[BLK=cP] at ( 38,  0)    (enc)  {Encoder\\\scriptsize$21{\to}64$};
+\node[BLK=cP] at ( 72,  0)    (edge) {EdgeNet\\\scriptsize pairwise};
+\node[BLK=cP] at (108,  0)    (gnn)  {GNN\\\scriptsize 3 layers, 64-d};
+\node[BLK=cP] at (150,  0)    (slot) {SlotAttn\\\scriptsize$K{=}3$, 3\,iters};
+
+\draw[AR] (obs)--(enc);
+\draw[AR] (enc)--(edge);
+\draw[AR] (edge)--(gnn);
+\draw[AR] (gnn)--node[above,TL,yshift=-0.5mm]{$W,g$}(slot);
+
+\begin{scope}[on background layer]
+  \node[GRP=cP,fit=(enc)(slot),
+        label={[LBL=cP]north west:Perception Backbone (Stage A, frozen)}](pbox){};
+\end{scope}
+
+% ╔══════════════════════════════════════════════════════════════════════╗
+% ║  ROW 2 — Cost-Map Synthesizer  (y = -42)                           ║
+% ╚══════════════════════════════════════════════════════════════════════╝
+\node[IO]              at (  0,-42) (goal) {\textbf{Goal}\\\scriptsize$(g_x,g_y)$};
+\node[BIG=cC,minimum width=72mm] at ( 85,-42) (synth)
+      {\textbf{Cost-Map Synthesizer}\\
+       \scriptsize Gaussian splat $\to$ $32{\times}32$ grid, range $6$\,m};
+
+\draw[AR] (goal)--(synth.west);
+
+% Arrows from perception → synthesizer (labeled, no intermediate boxes)
+\draw[AR] (gnn.south) to[out=-90,in=120]
+          node[pos=0.45,left,TL,xshift=-1mm]{$g\!\in\!\mathbb{R}^{N\times64}$}
+          (synth.north west);
+\draw[AR] (slot.south) to[out=-90,in=60]
+          node[pos=0.40,right,TL,xshift=1mm]{slots, $\alpha$}
+          (synth.north east);
+
+% ── 9 channels  (y = -59, inside green box) ──────────────────────────
+\node[font=\sffamily\scriptsize\bfseries,text=cG,anchor=east]
+     at (29,-59) (clbl) {9-ch map:};
+\foreach \i/\n [count=\c from 0] in {%
+  0/Goal,1/Ind,2/Traj1,3/Traj2,4/Traj3,5/Traj4,6/Cntr,7/Vel,8/Hull}{
+  \node[CH] at (32+\c*9.2,-59) (ch\i) {\textbf{L\i}\\\n};}
+
+\draw[ARC,draw=cC!80,line width=0.9pt]
+     (synth.south)--++(0,-3mm)node[right,TL,yshift=1.5mm]{\scriptsize$9$-ch};
+
+\begin{scope}[on background layer]
+  \node[GRP=cC,fit=(goal)(synth)(clbl)(ch8),
+        label={[LBL=cC]north west:Cost-Map Synthesis (analytic, 9 channels, 0 learnable params)}](cbox){};
+\end{scope}
+
+% ╔══════════════════════════════════════════════════════════════════════╗
+% ║  ROW 3 — Planning Head  (y = -84 top row, y = -103 bottom row)     ║
+% ╚══════════════════════════════════════════════════════════════════════╝
+
+% ── Top row: CostMapPlanner → Fusion → GRU → Actor → output ──────────
+\node[BIG=cR,minimum width=40mm]  at ( 65,-84) (cmp)
+      {\textbf{CostMapPlanner CNN}\\\scriptsize Conv $32{\to}64{\to}128{\to}128$};
+\node[BLK=cR] at (116,-84) (fus) {Fusion\\\scriptsize$320{\to}256$};
+\node[BLK=cR] at (152,-84) (gru) {GRU Cell\\\scriptsize$256{\to}256$};
+\node[BLK=cR] at (188,-84) (act) {Actor\\\scriptsize$256{\to}256{\to}2$};
+\node[IO]     at (218,-84) (at)  {$\mathbf{a}_t\!\in\!\mathbb{R}^2$};
+
+\draw[AR] (cmp)--(fus)  node[above,TL,pos=0.5]{\scriptsize 128-d};
+\draw[AR] (fus)--(gru);
+\draw[AR] (gru)--(act);
+\draw[AR] (act)--(at);
+
+% ── Bottom row: Robot State → Robot MLP → feeds Fusion ───────────────
+\node[IO]     at ( 10,-103) (rs)  {\textbf{Robot State}\\\scriptsize$\mathbf{s}_t\!\in\!\mathbb{R}^9$};
+\node[BLK=cR] at ( 50,-103) (rmlp){Robot MLP\\\scriptsize$9{\to}128{\to}64$};
+
+\draw[AR] (rs)--(rmlp);
+% Robot MLP → Fusion via upward bend (clean, no crossing)
+\draw[AR] (rmlp.east)--++(3mm,0)
+          |- node[pos=0.72,right,TL,xshift=1mm]{\scriptsize 64-d}
+          (fus.south);
+
+% ── Critic (below GRU output) ─────────────────────────────────────────
+\node[BLK=cR] at (188,-103) (crit){Critic\\\scriptsize$256{\to}256{\to}1$};
+\node[IO]     at (218,-103) (vt)  {$V_t\!\in\!\mathbb{R}$};
+
+\draw[AR] (gru.south)--++(0,-4mm)-|(crit.north);
+\draw[AR] (crit)--(vt);
+
+% ── Occupancy Head (aux, below CostMapPlanner) ────────────────────────
+\node[BLK=cA,minimum width=40mm] at (65,-103) (occ)
+      {Occupancy Head\\\scriptsize Conv $C{\to}32{\to}T$};
+\node[font=\sffamily\scriptsize\itshape,text=cA!90,anchor=west,xshift=2mm]
+     at (occ.east) (oxlbl) {aux loss (Stages B/C only)};
+
+\draw[AAX] (cmp.south)--(occ.north);
+
+% Arrow: cost-map → CostMapPlanner
+\draw[AR,draw=cC!85,line width=1pt]
+     ($(synth.south)+(0,-3mm)$)--++(0,-4mm)-|(cmp.north);
+
+\begin{scope}[on background layer]
+  \node[GRP=cR,fit=(cmp)(occ)(rs)(rmlp)(fus)(gru)(act)(crit)(at)(vt)(oxlbl),
+        label={[LBL=cR]north west:Planning Head (Stages B--C, trained)}](rbox){};
+\end{scope}
+
+% ╔══════════════════════════════════════════════════════════════════════╗
+% ║  LEGEND  (top-right, anchored outside perception box)               ║
+% ╚══════════════════════════════════════════════════════════════════════╝
+\node[draw=cG!50,rounded corners=2pt,fill=white,inner sep=5pt,
+      font=\sffamily\scriptsize,text=cG,align=left,anchor=north west]
+     at ($(pbox.north east)+(8mm,2mm)$)
+     {\textbf{Legend}\\[2pt]
+      \tikz{\fill[cP](0,0)rectangle(3mm,3mm);}~pretrained\\
+      \tikz{\fill[cC](0,0)rectangle(3mm,3mm);}~analytic\\
+      \tikz{\fill[cR](0,0)rectangle(3mm,3mm);}~trained (PPO)\\
+      \tikz{\draw[cA,dashed,line width=0.7pt](0,0)--(4mm,0);}~aux supervision};
+
+\end{tikzpicture}
+\end{document}

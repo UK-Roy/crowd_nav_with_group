@@ -279,13 +279,15 @@ After running both scripts, open `results/perception_detection_results.txt` and 
 
 ---
 
-### Baseline results (confirmed 2026-05-12)
+### Baseline results (confirmed 2026-05-14)
 
 | Model | SR | CR | TR | GCR | Mean Reward |
 |---|---|---|---|---|---|
-| **GRACE full** (stageC/best.pt) | **0.92** | 0.03 | 0.05 | 0.07% | 32.70 |
-| C1 No group layers | — | — | — | — | — |
-| C2 K=1 slot | — | — | — | — | — |
-| C3 No traj layers | — | — | — | — | — |
-| C4 No aux loss | — | — | — | — | — |
-| C5 Uniform alpha | — | — | — | — | — |
+| **GRACE full** (stageC/best.pt) | **0.90** | 0.07 | 0.03 | 0.00% | 32.08 |
+| C1 No group layers | 0.23 | 0.17 | 0.60 | 1.14% | 8.17 |
+| C2 K=1 slot | 0.01 | 0.36 | 0.63 | 5.32% | -27.36 |
+| C2 K=2 slots | 0.90 | 0.03 | 0.07 | 3.50% | 20.99 |
+| C2 K=5 slots | 0.86 | 0.04 | 0.10 | 4.29% | 9.90 |
+| C3 No traj layers | 0.91 | 0.02 | 0.07 | 3.30% | 20.45 |
+| C4 No aux loss | 0.89 | 0.04 | 0.07 | 3.86% | 19.14 |
+| C5 Uniform alpha | 0.12 | 0.44 | 0.44 | 6.15% | -7.46 |

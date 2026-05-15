@@ -92,6 +92,8 @@ POLICY_REGISTRY = [
          model_dir='trained_models/my_model',                          with_taga=True),
     dict(label='garn',           policy_key='garn',
          model_dir='trained_models/garn',                              with_taga=False),
+    dict(label='grace',          policy_key='grace',
+         model_dir='trained_models/gram_map/stageC',                   with_taga=False),
 ]
 
 # ── Filter registry by --policies flag ───────────────────────────────────────
@@ -262,7 +264,7 @@ def load_neural_policy(model_dir, policy_key, config, device):
         base=policy_key,
         base_kwargs=algo_args,
     )
-    actor_critic.load_state_dict(torch.load(load_path, map_location=device))
+    actor_critic.load_state_dict(torch.load(load_path, map_location=device), strict=False)
     actor_critic.base.nenv = 1
     actor_critic = actor_critic.to(device)
     actor_critic.eval()
@@ -994,7 +996,7 @@ for entry in ALL_ENTRIES:
             # ── Compute base action ──────────────────────────────────────────
             if is_neural:
                 obs_t  = raw_obs_to_tensor(obs, env.observation_space.spaces, device)
-                masks  = torch.zeros(1, 1, device=device)
+                masks  = torch.ones(1, 1, device=device)
                 with torch.no_grad():
                     _, action_tensor, _, hidden = actor_critic.act(
                         obs_t, hidden, masks, deterministic=True)

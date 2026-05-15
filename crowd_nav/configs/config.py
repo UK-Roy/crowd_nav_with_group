@@ -92,7 +92,7 @@ class Config(object):
 
     # config for Groups
     group = BaseConfig()
-    group.num_groups = 2        # Stage 2: 2 groups; bump to 3 in Stage 4
+    group.num_groups = 3        # benchmark: 3 groups
 
     group.min_size = 3
     group.max_size = 3          # Stage 2: slightly larger groups
@@ -108,19 +108,19 @@ class Config(object):
     # 'static_f'    — stationary F-formation (Kendon 1990)
     # 'dynamic_lf'  — moving, followers track leader (Helbing & Molnar 1995)
     # 'dynamic_free'— moving, each member navigates independently (ORCA)
-    group.types = ['static_f', 'dynamic_lf']  # Stage 3: add moving groups; add dynamic_free in Stage 4
+    group.types = ['static_f', 'dynamic_lf', 'dynamic_free']  # benchmark: all group types
 
     group.avoid_action = False
 
     # How many of the groups are placed along the robot→goal path to guarantee
     # the robot encounters them. Remaining groups are placed randomly.
-    group.num_on_path = 1       # Stage 3: 1 on-path; bump to 2 in Stage 4
+    group.num_on_path = 2       # benchmark: 2 groups on robot's path
 
     # config for realistic pedestrian / group modeling (shared benchmark env)
     # Every sub-flag gates a discrete feature; defaults are *off* so trained
     # checkpoints load bit-exactly. Flip on individually as phases validate.
     realistic = BaseConfig()
-    realistic.enabled = False                   # training: off; enable for evaluation
+    realistic.enabled = True                    # benchmark: all realistic phases on
     realistic.use_speed_variation = True        # Phase A: Weidmann 1992 v_pref
     realistic.use_group_speed_factor = True     # Phase B: Moussaid 2010 slowdown
     realistic.use_f_formations = True           # Phase C: Kendon 1990 (for static_f groups)
@@ -263,9 +263,9 @@ class Config(object):
 
     # config for simulation
     sim = BaseConfig()
-    sim.circle_radius = 6
-    sim.arena_size = 6
-    sim.human_num = 15      # Stage 3: increase density; increase to 20 in Stage 4
+    sim.circle_radius = 8.5
+    sim.arena_size = 8.5
+    sim.human_num = 20      # benchmark: full 20-human setting
     # Composition toggles. True/True = mixed (default, legacy behaviour).
     # True/False = individuals only. False/True = groups only (forces every
     # human into a group; clip human_num to total group capacity).
@@ -299,7 +299,7 @@ class Config(object):
     humans.visible = True
     # orca or social_force for now
     # hybrid_orca_social_force
-    humans.policy = "orca"
+    humans.policy = "social_force"
     humans.radius = 0.3
     humans.v_pref = 1
     humans.sensor = "coordinates"
