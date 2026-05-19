@@ -7,3 +7,7 @@
 2026-05-20 03:49:18, INFO: robot FOV 6.283185
 2026-05-20 03:49:18, INFO: humans FOV 6.283185
 2026-05-20 03:49:18, INFO: TAGA Safety Controller initialized
+2026-05-20 03:52:50, INFO: Testing success rate: 0.47, collision rate: 0.48, timeout rate: 0.05, group intrusion rate (GCR): 0.43%, nav time: 21.77, path length: 21.87, average intrusion ratio: 11.53%, average minimal distance during intrusions: 0.37
+2026-05-20 03:52:50, INFO: Collision cases: 0 2 3 5 10 12 14 15 16 18 19 22 24 27 28 29 30 31 33 35 36 38 42 47 49 50 53 55 58 60 62 64 66 68 70 72 74 77 78 80 81 83 86 88 91 92 97 99
+2026-05-20 03:52:50, INFO: Timeout cases: 20 45 65 73 95
+2026-05-20 03:52:50, INFO: Mean Reward: 15.19651021

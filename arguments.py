@@ -8,7 +8,7 @@ def get_args():
 
     # the saving directory for train.py
     parser.add_argument(
-        '--output_dir', type=str, default='trained_models/srnn_bench')
+        '--output_dir', type=str, default='trained_models/gram_map/stageD_sf')
         # '--output_dir', type=str, default='trained_models/my_model_group_attention')
 
     # resume training from an existing checkpoint or not
