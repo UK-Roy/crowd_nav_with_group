@@ -49,10 +49,8 @@ class SpatialEdgeSelfAttn(nn.Module):
     def create_attn_mask(self, each_seq_len, seq_len, nenv, max_human_num):
         # mask with value of False means padding and should be ignored by attention
         # why +1: use a sentinel in the end to handle the case when each_seq_len = 18
-        if self.args.no_cuda:
-            mask = torch.zeros(seq_len * nenv, max_human_num + 1).cpu()
-        else:
-            mask = torch.zeros(seq_len*nenv, max_human_num+1).cuda()
+        _dev = torch.device("cuda" if not self.args.no_cuda and torch.cuda.is_available() else "cpu")
+        mask = torch.zeros(seq_len * nenv, max_human_num + 1).to(_dev)
         mask[torch.arange(seq_len*nenv), each_seq_len.long()] = 1.
         mask = torch.logical_not(mask.cumsum(dim=1))
         # remove the sentinel
@@ -132,10 +130,8 @@ class EdgeAttention_M(nn.Module):
     def create_attn_mask(self, each_seq_len, seq_len, nenv, max_human_num):
         # mask with value of False means padding and should be ignored by attention
         # why +1: use a sentinel in the end to handle the case when each_seq_len = 18
-        if self.args.no_cuda:
-            mask = torch.zeros(seq_len * nenv, max_human_num + 1).cpu()
-        else:
-            mask = torch.zeros(seq_len * nenv, max_human_num + 1).cuda()
+        _dev = torch.device("cuda" if not self.args.no_cuda and torch.cuda.is_available() else "cpu")
+        mask = torch.zeros(seq_len * nenv, max_human_num + 1).to(_dev)
         mask[torch.arange(seq_len * nenv), each_seq_len.long()] = 1.
         mask = torch.logical_not(mask.cumsum(dim=1))
         # remove the sentinel
@@ -350,10 +346,8 @@ class selfAttn_merge_SRNN(nn.Module):
 
         dummy_human_mask = [0] * self.human_num
         dummy_human_mask[0] = 1
-        if self.args.no_cuda:
-            self.dummy_human_mask = Variable(torch.Tensor([dummy_human_mask]).cpu())
-        else:
-            self.dummy_human_mask = Variable(torch.Tensor([dummy_human_mask]).cuda())
+        _dev = torch.device("cuda" if not self.args.no_cuda and torch.cuda.is_available() else "cpu")
+        self.dummy_human_mask = Variable(torch.Tensor([dummy_human_mask]).to(_dev))
 
 
 
@@ -387,12 +381,9 @@ class selfAttn_merge_SRNN(nn.Module):
         masks = reshapeT(masks, seq_length, nenv)
 
 
-        if self.args.no_cuda:
-            all_hidden_states_edge_RNNs = Variable(
-                torch.zeros(1, nenv, 1+self.human_num, rnn_hxs['human_human_edge_rnn'].size()[-1]).cpu())
-        else:
-            all_hidden_states_edge_RNNs = Variable(
-                torch.zeros(1, nenv, 1+self.human_num, rnn_hxs['human_human_edge_rnn'].size()[-1]).cuda())
+        _dev = torch.device("cuda" if not self.args.no_cuda and torch.cuda.is_available() else "cpu")
+        all_hidden_states_edge_RNNs = Variable(
+            torch.zeros(1, nenv, 1+self.human_num, rnn_hxs['human_human_edge_rnn'].size()[-1]).to(_dev))
 
         robot_states = torch.cat((temporal_edges, robot_node), dim=-1)
         robot_states = self.robot_linear(robot_states)

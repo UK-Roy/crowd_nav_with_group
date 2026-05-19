@@ -14,12 +14,12 @@ class Config(object):
     training.device = "cuda:0" if args.cuda else "cpu"
 
     env = BaseConfig()
-    env.time_limit = 50
+    env.time_limit = 49.25
     env.time_step = 0.25
     env.val_size = 100
-    env.test_size = 500
+    env.test_size = 100
     # if randomize human behaviors, set to True, else set to False
-    env.randomize_attributes = False
+    env.randomize_attributes = True
     env.num_processes = args.num_processes
     # record robot states and actions an episode for system identification in sim2real
     env.record = False
@@ -29,16 +29,54 @@ class Config(object):
     reward = BaseConfig()
     reward.success_reward = 10
     reward.collision_penalty = -20
-    # discomfort distance
     reward.discomfort_dist = 0.25
     reward.discomfort_penalty_factor = 10
     reward.gamma = 0.99
+    reward.group_safety_buffer = 0.1
+    reward.discomfort_group_dist = 0.35
+    reward.discomfort_grp_penalty_factor = 10
+    reward.grp_collision_penalty = -5
+    reward.use_garn_reward = False
+
+    # config for Groups
+    group = BaseConfig()
+    group.num_groups = 3
+    group.min_size = 3
+    group.max_size = 3
+    group.min_distance = 2.0
+    group.min_radius = 1.0
+    group.max_radius = 1.3
+    group.dynamic = True
+    group.ground_truth = True
+    group.types = ['static_f', 'dynamic_lf', 'dynamic_free']
+    group.avoid_action = False
+    group.num_on_path = 2
+
+    # config for realistic pedestrian / group modeling
+    realistic = BaseConfig()
+    realistic.enabled = True
+    realistic.use_speed_variation = True
+    realistic.use_group_speed_factor = True
+    realistic.use_f_formations = True
+    realistic.use_leader_follower = True
+    realistic.use_convex_hull = True
+    realistic.individual_speed_mean = 1.34
+    realistic.individual_speed_std  = 0.26
+    realistic.individual_speed_min  = 0.80
+    realistic.individual_speed_max  = 1.80
+    realistic.group_speed_factor = 0.85
+    realistic.f_formation_radius = 0.65
+    realistic.leader_follower_spacing = 0.70
+    realistic.leader_follower_gain = 1.20
+    realistic.hull_degenerate_buffer = 0.30
 
     # config for simulation
     sim = BaseConfig()
-    sim.circle_radius = 6 * np.sqrt(2)
-    sim.arena_size = 6
+    sim.circle_radius = 8.5
+    sim.arena_size = 8.5
     sim.human_num = 20
+    sim.has_individuals = True
+    sim.has_groups = True
     # actual human num in each timestep, in [human_num-human_num_range, human_num+human_num_range]
     sim.human_num_range = 0
     sim.predict_steps = 5
@@ -56,11 +94,59 @@ class Config(object):
     save_path = None
 
     # whether wrap the vec env with VecPretextNormalize class
-    # = True only if we are using a network for human trajectory prediction (sim.predict_method = 'inferred')
     if sim.predict_method == 'inferred':
         env.use_wrapper = True
     else:
         env.use_wrapper = False
+
+    # config for TAGA (Tangent Action for Group Avoidance)
+    taga = BaseConfig()
+    taga.smooth_switching = True
+    taga.switch_band = 0.5
+    taga.safe_margin = 0.6
+    taga.goal_threshold = 2.5
+    taga.use_scaled_zones = True
+    taga.emergency_factor = 0.5
+    taga.danger_factor = 0.833
+    taga.caution_factor = 2.0
+    taga.emergency_zone = 0.4
+    taga.danger_zone = 0.6
+    taga.caution_zone = 1.0
+    taga.use_accel_limit = True
+    taga.max_accel_factor = 0.5
+    taga.cost_aware_side = True
+    taga.look_ahead = 5.0
+    taga.cone_half_angle = 60.0
+    taga.w_goal = 0.4
+    taga.w_obstacle = 0.6
+    taga.multi_group = False
+    taga.max_groups = 3
+    taga.intent_based = True
+    taga.intent_lookahead = 0.7
+    taga.intent_margin = 0.0
+    taga.safety_filter = True
+    taga.safety_lookahead = 1.0
+    taga.safety_radius = 0.55
+    taga.safety_damping = 0.0
+    taga.safety_horizons = [0.3, 0.7, 1.0, 1.5, 2.0]
+    taga.safety_alphas = [1.0, 0.7, 0.4, 0.2, 0.0]
+    taga.debug_log = True
+    taga.hull_safety_filter = False
+    taga.hull_safety_margin = 0.15
+    taga.hull_safety_horizons = [0.3, 0.7, 1.0]
+    taga.direction_guard = False
+    taga.direction_max_angle = 30.0
+    taga.anti_vel_dynamic = False
+    taga.anti_vel_min_speed = 0.1
+    taga.anti_vel_max_with_goal = 0.5
+    taga.anti_vel_w_anti = 0.3
+    taga.anti_vel_w_goal = 0.7
+    taga.anti_vel_cone_angle = 45.0
+    taga.anti_vel_pause_radius = 1.2
+    taga.cone_ttc_check = True
+    taga.cone_ttc_horizon = 0.7
+    taga.cone_ttc_radius = 0.55
+    taga.max_consecutive_pause = 3
 
     # human config
     humans = BaseConfig()
@@ -77,7 +163,7 @@ class Config(object):
 
     # a human may change its goal before it reaches its old goal
     # if randomize human behaviors, set to True, else set to False
-    humans.random_goal_changing = False
+    humans.random_goal_changing = True
     humans.goal_change_chance = 0.5
 
     # a human may change its goal after it reaches its old goal

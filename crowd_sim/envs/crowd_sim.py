@@ -1065,125 +1065,103 @@ class CrowdSim(gym.Env):
         return ob, reward, done, info
 
     def render(self, mode='human'):
-        """ Render the current status of the environment using matplotlib """
+        """Render the environment with group-aware colors and convex hull boundaries."""
         import matplotlib.pyplot as plt
         import matplotlib.lines as mlines
-        from matplotlib import patches
+        import matplotlib.patches as mpatches
 
-        plt.rcParams['animation.ffmpeg_path'] = '/usr/bin/ffmpeg'
+        GROUP_COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4']
+        TYPE_HATCH   = {'static_f': '///', 'dynamic_lf': '', 'dynamic_free': '...'}
+        TYPE_LABEL   = {'static_f': 'Static F-form', 'dynamic_lf': 'Dynamic LF', 'dynamic_free': 'Dynamic Free'}
 
-        robot_color = 'yellow'
-        goal_color = 'red'
-        arrow_color = 'red'
-        arrow_style = patches.ArrowStyle("->", head_length=4, head_width=2)
+        ax = self.render_axis
+        artists = []
 
-        def calcFOVLineEndPoint(ang, point, extendFactor):
-            # choose the extendFactor big enough
-            # so that the endPoints of the FOVLine is out of xlim and ylim of the figure
-            FOVLineRot = np.array([[np.cos(ang), -np.sin(ang), 0],
-                                   [np.sin(ang), np.cos(ang), 0],
-                                   [0, 0, 1]])
-            point.extend([1])
-            # apply rotation matrix
-            newPoint = np.matmul(FOVLineRot, np.reshape(point, [3, 1]))
-            # increase the distance between the line start point and the end point
-            newPoint = [extendFactor * newPoint[0, 0], extendFactor * newPoint[1, 0], 1]
-            return newPoint
+        # ── goal ──────────────────────────────────────────────────────────────
+        goal = mlines.Line2D([self.robot.gx], [self.robot.gy], color='red',
+                             marker='*', linestyle='None', markersize=14, zorder=10)
+        ax.add_artist(goal); artists.append(goal)
 
+        # ── robot ─────────────────────────────────────────────────────────────
+        rx, ry = self.robot.get_position()
+        robot_circle = plt.Circle((rx, ry), self.robot.radius,
+                                  facecolor='gold', edgecolor='black', linewidth=1.2, zorder=8)
+        ax.add_artist(robot_circle); artists.append(robot_circle)
 
+        # robot velocity arrow
+        spd = np.hypot(self.robot.vx, self.robot.vy)
+        if spd > 0.05:
+            robot_theta = (self.robot.theta if self.robot.kinematics == 'unicycle'
+                           else np.arctan2(self.robot.vy, self.robot.vx))
+            arr = ax.annotate('', xy=(rx + 0.45 * np.cos(robot_theta),
+                                      ry + 0.45 * np.sin(robot_theta)),
+                              xytext=(rx, ry),
+                              arrowprops=dict(arrowstyle='->', color='black', lw=1.5), zorder=9)
+            artists.append(arr)
 
-        ax=self.render_axis
-        artists=[]
+        # sensor range ring
+        sr = plt.Circle((rx, ry), self.robot.sensor_range,
+                        fill=False, edgecolor='steelblue', linestyle=':', linewidth=1.0, alpha=0.5, zorder=4)
+        ax.add_artist(sr); artists.append(sr)
 
-        # add goal
-        goal=mlines.Line2D([self.robot.gx], [self.robot.gy], color=goal_color, marker='*', linestyle='None', markersize=15, label='Goal')
-        ax.add_artist(goal)
-        artists.append(goal)
-
-        # add robot
-        robotX,robotY=self.robot.get_position()
-
-        robot=plt.Circle((robotX,robotY), self.robot.radius, fill=True, color=robot_color)
-        ax.add_artist(robot)
-        artists.append(robot)
-
-        plt.legend([robot, goal], ['Robot', 'Goal'], fontsize=16)
-
-
-        # compute orientation in each step and add arrow to show the direction
-        radius = self.robot.radius
-        arrowStartEnd=[]
-
-        robot_theta = self.robot.theta if self.robot.kinematics == 'unicycle' else np.arctan2(self.robot.vy, self.robot.vx)
-
-        arrowStartEnd.append(((robotX, robotY), (robotX + radius * np.cos(robot_theta), robotY + radius * np.sin(robot_theta))))
-
-        for i, human in enumerate(self.humans):
-            theta = np.arctan2(human.vy, human.vx)
-            arrowStartEnd.append(((human.px, human.py), (human.px + radius * np.cos(theta), human.py + radius * np.sin(theta))))
-
-        arrows = [patches.FancyArrowPatch(*arrow, color=arrow_color, arrowstyle=arrow_style)
-                  for arrow in arrowStartEnd]
-        for arrow in arrows:
-            ax.add_artist(arrow)
-            artists.append(arrow)
-
-
-        # draw FOV for the robot
-        # add robot FOV
-
-        if self.robot.FOV < 2 * np.pi:
-            FOVAng = self.robot_fov / 2
-            FOVLine1 = mlines.Line2D([0, 0], [0, 0], linestyle='--')
-            FOVLine2 = mlines.Line2D([0, 0], [0, 0], linestyle='--')
-
-
-            startPointX = robotX
-            startPointY = robotY
-            endPointX = robotX + radius * np.cos(robot_theta)
-            endPointY = robotY + radius * np.sin(robot_theta)
-
-            # transform the vector back to world frame origin, apply rotation matrix, and get end point of FOVLine
-            # the start point of the FOVLine is the center of the robot
-            FOVEndPoint1 = calcFOVLineEndPoint(FOVAng, [endPointX - startPointX, endPointY - startPointY], 20. / self.robot.radius)
-            FOVLine1.set_xdata(np.array([startPointX, startPointX + FOVEndPoint1[0]]))
-            FOVLine1.set_ydata(np.array([startPointY, startPointY + FOVEndPoint1[1]]))
-            FOVEndPoint2 = calcFOVLineEndPoint(-FOVAng, [endPointX - startPointX, endPointY - startPointY], 20. / self.robot.radius)
-            FOVLine2.set_xdata(np.array([startPointX, startPointX + FOVEndPoint2[0]]))
-            FOVLine2.set_ydata(np.array([startPointY, startPointY + FOVEndPoint2[1]]))
-
-            ax.add_artist(FOVLine1)
-            ax.add_artist(FOVLine2)
-            artists.append(FOVLine1)
-            artists.append(FOVLine2)
-
-        # add an arc of robot's sensor range
-        sensor_range = plt.Circle(self.robot.get_position(), self.robot.sensor_range, fill=False, linestyle='--')
-        ax.add_artist(sensor_range)
-        artists.append(sensor_range)
-        # add humans and change the color of them based on visibility
-        human_circles = [plt.Circle(human.get_position(), human.radius, fill=False) for human in self.humans]
-
-
-        for i in range(len(self.humans)):
-            ax.add_artist(human_circles[i])
-            artists.append(human_circles[i])
-
-            # green: visible; red: invisible
-            if self.detect_visible(self.robot, self.humans[i], robot1=True):
-                human_circles[i].set_color(c='g')
+        # ── humans ────────────────────────────────────────────────────────────
+        for h in self.humans:
+            gid = getattr(h, 'group_id', None)
+            if gid is not None:
+                color = GROUP_COLORS[gid % len(GROUP_COLORS)]
+                grp   = self.grp[gid] if hasattr(self, 'grp') and gid < len(self.grp) else None
+                hatch = TYPE_HATCH.get(getattr(grp, 'group_type', ''), '') if grp else ''
+                c = plt.Circle((h.px, h.py), h.radius, facecolor=color, alpha=0.75,
+                               hatch=hatch, edgecolor='black', linewidth=0.8, zorder=5)
             else:
-                human_circles[i].set_color(c='r')
+                c = plt.Circle((h.px, h.py), h.radius, facecolor='lightgray',
+                               edgecolor='black', linewidth=0.8, zorder=5)
+            ax.add_patch(c); artists.append(c)
 
-            # label numbers on each human
-            # plt.text(self.humans[i].px - 0.1, self.humans[i].py - 0.1, str(self.humans[i].id), color='black', fontsize=12)
-            plt.text(self.humans[i].px - 0.1, self.humans[i].py - 0.1, i, color='black', fontsize=12)
+            # velocity arrow for moving humans
+            if np.hypot(h.vx, h.vy) > 0.05 and not getattr(h, 'isObstacle', False):
+                th = np.arctan2(h.vy, h.vx)
+                a  = ax.annotate('', xy=(h.px + 0.35 * np.cos(th), h.py + 0.35 * np.sin(th)),
+                                 xytext=(h.px, h.py),
+                                 arrowprops=dict(arrowstyle='->', color='dimgray', lw=0.9), zorder=6)
+                artists.append(a)
 
+            # human index label
+            t = ax.text(h.px - 0.1, h.py - 0.1, str(self.humans.index(h)),
+                        color='black', fontsize=8, zorder=11)
+            artists.append(t)
 
+        # ── group convex hull boundaries ──────────────────────────────────────
+        group_hulls = getattr(self, 'group_hulls', None) or {}
+        for gid, hull in group_hulls.items():
+            color = GROUP_COLORS[gid % len(GROUP_COLORS)]
+            if getattr(hull, '_kind', '') == 'polygon':
+                poly = plt.Polygon(hull._verts, fill=False, edgecolor=color,
+                                   linestyle='--', linewidth=1.8, zorder=7)
+                ax.add_patch(poly); artists.append(poly)
+            else:
+                hc = plt.Circle(hull.centroid, hull.bounding_radius, fill=False,
+                                edgecolor=color, linestyle='--', linewidth=1.8, zorder=7)
+                ax.add_patch(hc); artists.append(hc)
+
+        # ── legend ────────────────────────────────────────────────────────────
+        legend_handles = [
+            mpatches.Patch(facecolor='gold', edgecolor='black', label='Robot'),
+            mlines.Line2D([], [], marker='*', color='red', linestyle='None',
+                          markersize=10, label='Goal'),
+            mpatches.Patch(facecolor='lightgray', edgecolor='black', label='Individual'),
+        ]
+        if hasattr(self, 'grp'):
+            for g in self.grp:
+                if g.members:
+                    col = GROUP_COLORS[g.id % len(GROUP_COLORS)]
+                    lbl = f"Grp {g.id}: {TYPE_LABEL.get(g.group_type, g.group_type)}"
+                    legend_handles.append(mpatches.Patch(facecolor=col, alpha=0.75,
+                        hatch=TYPE_HATCH.get(g.group_type, ''), edgecolor='black', label=lbl))
+        legend = ax.legend(handles=legend_handles, loc='upper right', fontsize=7,
+                           framealpha=0.85, edgecolor='gray')
+        artists.append(legend)
 
         plt.pause(0.1)
         for item in artists:
-            item.remove() # there should be a better way to do this. For example,
-            # initially use add_artist and draw_artist later on
-        for t in ax.texts:
-            t.set_visible(False)
+            item.remove()

@@ -160,20 +160,29 @@ def evaluate(actor_critic, eval_envs, num_processes, device, test_size, logging,
                 global_time = baseEnv.global_time
            
             if group_avoid_action:
-                if obs['grp']:
-                    group_list = obs['clusters'][0]
+                # Read group info directly from env (obs keys are not in obs_space so VecEnv filters them)
+                env_grp = getattr(baseEnv, 'grp', [])
+                env_hulls = getattr(baseEnv, 'group_hulls', {}) or {}
+                if env_grp and env_hulls:
                     group_dict = {}
-                    for idx, group_id in enumerate(group_list):
-                        if group_id != -1:
-                            group_dict.setdefault(int(group_id), []).append(idx)
-                    grp_obs = {'group_members': group_dict,
-                               'group_centroids': obs['group_centroids'],
-                               'group_radii': obs['group_radii']}
+                    group_centroids_direct = {}
+                    group_radii_direct = {}
+                    for g in env_grp:
+                        if g.members and g.id in env_hulls:
+                            hull = env_hulls[g.id]
+                            group_dict[g.id] = [h.id for h in g.members]
+                            cx, cy = hull.centroid if hasattr(hull, 'centroid') else (g.centroid[0], g.centroid[1])
+                            group_centroids_direct[g.id] = torch.tensor([cx, cy], device=device, dtype=torch.float32)
+                            group_radii_direct[g.id] = hull.bounding_radius if hasattr(hull, 'bounding_radius') else g.radius
+                    if group_dict:
+                        grp_obs = {'group_members': group_dict,
+                                   'group_centroids': group_centroids_direct,
+                                   'group_radii': group_radii_direct}
 
                 if grp_obs and grp_obs.get('group_members'):
                     detected_groups = grp_obs['group_members']
-                    group_centroids = grp_obs['group_centroids'][0]
-                    group_radii = grp_obs['group_radii'][0]
+                    group_centroids = grp_obs['group_centroids']   # dict: gid -> tensor
+                    group_radii     = grp_obs['group_radii']       # dict: gid -> scalar
 
                     robot_position = torch.tensor(
                         [obs['robot_node'][0, 0, 0], obs['robot_node'][0, 0, 1]], device=device)

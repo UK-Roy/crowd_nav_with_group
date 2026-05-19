@@ -51,6 +51,30 @@ python visualize_env.py --individuals-only     # individuals only
 python record_episode.py --seed 3 --dpi 150 --fps 10 --out episode.mp4
 ```
 
+**Render paper figure frames** (static PNG snapshots of a GRACE episode):
+```bash
+# Default: GRACE stageC, seed 0, frames at steps 0/20/40/60/80 → results/paper_frames/
+python render_paper_frames.py
+
+# Custom seed and timesteps, with robot trajectory trail
+python render_paper_frames.py --seed 3 --steps 0,15,35,55,80 --trail
+
+# Try different seeds to find a visually clear episode
+python render_paper_frames.py --seed 7 --steps 0,25,50,75 --trail
+
+# Change output directory or resolution
+python render_paper_frames.py --out-dir figures/episode_frames --dpi 300
+```
+
+Outputs: individual `frame_step<N>.png` files (300 DPI, print quality) + `panel.png` (all frames side-by-side, ready for paper).
+Each frame shows: groups colored by ID, dashed convex hull boundaries, group type via hatch pattern (`///`=static F-form, `...`=dynamic free, none=dynamic LF), robot in gold, velocity arrows, timestep label.
+
+**Notes:**
+- `--trail` draws the robot's trajectory path across all frames
+- `--panel-only` skips individual PNGs and only saves the combined panel
+- Try multiple seeds to find an episode where the robot visibly navigates around groups
+- The script uses `trained_models/gram_map/stageC/checkpoints/best.pt` by default; use `--model-dir` and `--checkpoint` to change
+
 **Record and compare multiple policies** (produces videos + metrics CSV):
 ```bash
 # All registered policies × N seeds
@@ -234,6 +258,8 @@ Every `step()` call runs in this order:
 | `visualize_env.py` | Interactive environment viewer |
 | `record_episode.py` | Paper-quality video recorder (single policy) |
 | `record_comparison.py` | Multi-policy comparison recorder + metrics CSV |
+| `render_paper_frames.py` | Static PNG frame snapshots of GRACE episode for paper figures |
+| `run_all_test.sh` | Batch test.py runner for all policies; logs to `results/test_benchmark/` |
 
 ## Evaluation Metrics
 

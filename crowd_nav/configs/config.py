@@ -120,7 +120,7 @@ class Config(object):
     # Every sub-flag gates a discrete feature; defaults are *off* so trained
     # checkpoints load bit-exactly. Flip on individually as phases validate.
     realistic = BaseConfig()
-    realistic.enabled = True                    # benchmark: all realistic phases on
+    realistic.enabled = False                   # SRNN training: simple env (no realistic)
     realistic.use_speed_variation = True        # Phase A: Weidmann 1992 v_pref
     realistic.use_group_speed_factor = True     # Phase B: Moussaid 2010 slowdown
     realistic.use_f_formations = True           # Phase C: Kendon 1990 (for static_f groups)
@@ -299,7 +299,7 @@ class Config(object):
     humans.visible = True
     # orca or social_force for now
     # hybrid_orca_social_force
-    humans.policy = "social_force"
+    humans.policy = "orca"
     humans.radius = 0.3
     humans.v_pref = 1
     humans.sensor = "coordinates"
@@ -332,7 +332,7 @@ class Config(object):
     # For baseline: srnn; another method: selfAttn_merge_srnn
     # our method robot.policy = 'selfAttn_merge_srnn'
     # GARN baseline: 'garn'; GRAM-v2: 'gram_v2'; GRACE: 'grace'
-    robot.policy = 'grace'
+    robot.policy = 'srnn'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"
