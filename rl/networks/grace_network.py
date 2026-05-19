@@ -157,6 +157,27 @@ class GRACENetwork(nn.Module):
     def recurrent_hidden_state_size(self) -> int:
         return GRU_HIDDEN
 
+    def freeze_nav(self):
+        """Freeze navigation components (planner, GRU, actor, critic).
+        Leaves perception (detector, slot_attn, synthesizer) trainable.
+        Use for SF-pedestrian fine-tuning where only perception needs to adapt.
+        """
+        for p in self.planner.parameters():
+            p.requires_grad_(False)
+        for p in self.gru.parameters():
+            p.requires_grad_(False)
+        for p in self.fusion.parameters():
+            p.requires_grad_(False)
+        for p in self.robot_mlp.parameters():
+            p.requires_grad_(False)
+        for p in self.actor.parameters():
+            p.requires_grad_(False)
+        for p in self.critic.parameters():
+            p.requires_grad_(False)
+        for p in self.critic_linear.parameters():
+            p.requires_grad_(False)
+        print("[GRACE] Navigation components frozen — only perception will train.")
+
     def load_frozen_backbones(self, detector_path, slot_path, device, freeze=True):
         """Load Phase 2 + Phase 3 checkpoints (identical API to GRAM-v2)."""
         ckpt2 = torch.load(detector_path, map_location=device)

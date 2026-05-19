@@ -78,6 +78,7 @@ class Config(object):
     grace.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
     # Freeze backbone during Stage B (initial PPO); unfreeze for Stage C fine-tuning
     grace.freeze_backbone   = False
+    grace.freeze_nav        = False  # True = freeze nav, train perception only (SF fine-tuning)
     # BEV grid: grid_size × grid_size cells covering 2×grid_range metres square
     # Default 32×32 at 6m → 0.375 m/cell.  Increase to 48 or 64 if VRAM allows.
     grace.grid_size  = 32

@@ -1,13 +1,13 @@
-2026-05-20 01:00:30, INFO: robot FOV 2.000000
-2026-05-20 01:00:30, INFO: humans FOV 2.000000
-2026-05-20 01:00:30, INFO: Create other envs with new settings
-2026-05-20 01:00:30, INFO: human number: 20
-2026-05-20 01:00:30, INFO: Randomize human's radius and preferred speed
-2026-05-20 01:00:30, INFO: Circle width: 8.5
-2026-05-20 01:00:30, INFO: robot FOV 6.283185
-2026-05-20 01:00:30, INFO: humans FOV 6.283185
-2026-05-20 01:00:30, INFO: TAGA Safety Controller initialized
-2026-05-20 01:09:13, INFO: Testing success rate: 0.81, collision rate: 0.14, timeout rate: 0.05, group intrusion rate (GCR): 0.30%, nav time: 19.63, path length: 23.31, average intrusion ratio: 15.94%, average minimal distance during intrusions: 0.37
-2026-05-20 01:09:13, INFO: Collision cases: 17 18 20 29 34 48 51 55 67 72 81 84 86 98
-2026-05-20 01:09:13, INFO: Timeout cases: 15 25 47 68 85
-2026-05-20 01:09:13, INFO: Mean Reward: 27.141605709999993
+2026-05-20 03:41:19, INFO: robot FOV 2.000000
+2026-05-20 03:41:19, INFO: humans FOV 2.000000
+2026-05-20 03:41:19, INFO: Create other envs with new settings
+2026-05-20 03:41:19, INFO: human number: 20
+2026-05-20 03:41:19, INFO: Randomize human's radius and preferred speed
+2026-05-20 03:41:19, INFO: Circle width: 8.5
+2026-05-20 03:41:19, INFO: robot FOV 6.283185
+2026-05-20 03:41:19, INFO: humans FOV 6.283185
+2026-05-20 03:41:19, INFO: TAGA Safety Controller initialized
+2026-05-20 03:45:38, INFO: Testing success rate: 0.88, collision rate: 0.06, timeout rate: 0.06, group intrusion rate (GCR): 0.84%, nav time: 19.23, path length: 23.87, average intrusion ratio: 16.86%, average minimal distance during intrusions: 0.36
+2026-05-20 03:45:38, INFO: Collision cases: 0 29 46 50 71 96
+2026-05-20 03:45:38, INFO: Timeout cases: 7 15 47 76 86 97
+2026-05-20 03:45:38, INFO: Mean Reward: 29.104242350000003

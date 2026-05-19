@@ -1,12 +1,12 @@
-2025-09-27 23:11:17, INFO: robot FOV 2.000000
-2025-09-27 23:11:17, INFO: humans FOV 2.000000
-2025-09-27 23:11:17, INFO: Create other envs with new settings
-2025-09-27 23:11:17, INFO: human number: 20
-2025-09-27 23:11:17, INFO: Randomize human's radius and preferred speed
-2025-09-27 23:11:17, INFO: Circle width: 8.485281374238571
-2025-09-27 23:11:17, INFO: robot FOV 6.283185
-2025-09-27 23:11:17, INFO: humans FOV 6.283185
-2025-09-27 23:12:52, INFO: Testing success rate: 0.02, collision rate: 0.98, timeout rate: 0.00, group intrusion rate (GCR): 6.43%, nav time: 11.00, path length: 10.78, average intrusion ratio: 9.36%, average minimal distance during intrusions: 0.42
-2025-09-27 23:12:52, INFO: Collision cases: 0 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99
-2025-09-27 23:12:52, INFO: Timeout cases: 
-2025-09-27 23:12:52, INFO: Mean Reward: -41.54481465999999
+2026-05-20 03:35:04, INFO: robot FOV 2.000000
+2026-05-20 03:35:04, INFO: humans FOV 2.000000
+2026-05-20 03:35:04, INFO: Create other envs with new settings
+2026-05-20 03:35:04, INFO: human number: 20
+2026-05-20 03:35:04, INFO: Randomize human's radius and preferred speed
+2026-05-20 03:35:04, INFO: Circle width: 8.5
+2026-05-20 03:35:04, INFO: robot FOV 6.283185
+2026-05-20 03:35:04, INFO: humans FOV 6.283185
+2026-05-20 03:38:05, INFO: Testing success rate: 0.86, collision rate: 0.14, timeout rate: 0.00, group intrusion rate (GCR): 0.00%, nav time: 14.88, path length: 23.40, average intrusion ratio: 7.68%, average minimal distance during intrusions: 0.39
+2026-05-20 03:38:05, INFO: Collision cases: 3 10 27 28 37 45 48 53 60 77 78 87 95 98
+2026-05-20 03:38:05, INFO: Timeout cases: 
+2026-05-20 03:38:05, INFO: Mean Reward: 31.389167840000006

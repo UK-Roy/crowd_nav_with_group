@@ -34,9 +34,13 @@ def main():
 	parser.add_argument('--render_traj', default=True, action='store_true')
 	# whether to save slide show of episodes
 	parser.add_argument('--save_slides', default=False, action='store_true')
-	parser.add_argument('--group_avoid', default=False, action='store_true', 
+	parser.add_argument('--group_avoid', default=False, action='store_true',
                     help='Enable group avoidance (TAGA)')
- 
+	parser.add_argument('--no_groups', default=False, action='store_true',
+                    help='Override config: individuals only (no groups), realistic env kept on')
+	parser.add_argument('--sf_humans', default=False, action='store_true',
+                    help='Override config: pedestrians use social_force instead of ORCA')
+
 	test_args = parser.parse_args()
 	if test_args.save_slides:
 		test_args.visualize = True
@@ -83,6 +87,15 @@ def main():
 		from crowd_nav.configs.oldconfig import Config
 	env_config = config = Config()
 
+	# Override: individuals-only realistic env (no groups)
+	if test_args.no_groups:
+		config.sim.has_groups = False
+		config.group.num_groups = 0
+		config.group.num_on_path = 0
+
+	# Override: social force pedestrians
+	if test_args.sf_humans:
+		config.humans.policy = 'social_force'
 
 	# configure logging and device
 	# print test result in log file

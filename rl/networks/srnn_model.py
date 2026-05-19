@@ -408,12 +408,9 @@ class SRNN(nn.Module):
 
 
 
-        if self.args.no_cuda:
-            all_hidden_states_edge_RNNs = Variable(
-                torch.zeros(1, nenv, self.human_num + 1, rnn_hxs['human_human_edge_rnn'].size()[-1]).cpu())
-        else:
-            all_hidden_states_edge_RNNs = Variable(
-                torch.zeros(1, nenv, self.human_num + 1, rnn_hxs['human_human_edge_rnn'].size()[-1]).cuda())
+        _dev = torch.device("cuda" if not self.args.no_cuda and torch.cuda.is_available() else "cpu")
+        all_hidden_states_edge_RNNs = Variable(
+            torch.zeros(1, nenv, self.human_num + 1, rnn_hxs['human_human_edge_rnn'].size()[-1]).to(_dev))
 
 
         # Do forward pass through temporaledgeRNN

@@ -129,6 +129,8 @@ def main():
 			device=device,
 			freeze=config.grace.freeze_backbone,
 		)
+		if getattr(config.grace, 'freeze_nav', False):
+			actor_critic.base.freeze_nav()
 
 	# continue training from an existing model if resume = True
 	if algo_args.resume:

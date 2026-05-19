@@ -100,10 +100,11 @@ class ORCA(Policy):
         pref_vel = velocity / speed if speed > 1 else velocity
 
         # Perturb a little to avoid deadlocks due to perfect symmetry.
-        # perturb_angle = np.random.random() * 2 * np.pi
-        # perturb_dist = np.random.random() * 0.01
-        # perturb_vel = np.array((np.cos(perturb_angle), np.sin(perturb_angle))) * perturb_dist
-        # pref_vel += perturb_vel
+        # Uses np.random (seeded per-episode at reset) → reproducible across runs.
+        perturb_angle = np.random.random() * 2 * np.pi
+        perturb_dist = np.random.random() * 0.01
+        perturb_vel = np.array((np.cos(perturb_angle), np.sin(perturb_angle))) * perturb_dist
+        pref_vel += perturb_vel
 
         self.sim.setAgentPrefVelocity(0, tuple(pref_vel))
         for i, human_state in enumerate(state.human_states):
