@@ -29,6 +29,7 @@ run_test "orca"         trained_models/ORCA_no_rand      00000.pt
 run_test "social_force" trained_models/SF_no_rand        00000.pt
 
 # ── Learning-based ─────────────────────────────────────────────────────
+run_test "srnn"         trained_models/srnn_bench          30800.pt
 run_test "intention_rl" trained_models/GST_predictor_rand 41665.pt
 
 # ── GRACE (ours) ───────────────────────────────────────────────────────

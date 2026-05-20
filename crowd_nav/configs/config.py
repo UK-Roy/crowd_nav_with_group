@@ -78,7 +78,7 @@ class Config(object):
     grace.phase3_checkpoint = 'trained_models/gram_v2/phase3/best.pt'
     # Freeze backbone during Stage B (initial PPO); unfreeze for Stage C fine-tuning
     grace.freeze_backbone   = False
-    grace.freeze_nav        = False  # True = freeze nav, train perception only (SF fine-tuning)
+    grace.freeze_nav        = True   # True = freeze nav, train perception only (SF fine-tuning)
     # BEV grid: grid_size × grid_size cells covering 2×grid_range metres square
     # Default 32×32 at 6m → 0.375 m/cell.  Increase to 48 or 64 if VRAM allows.
     grace.grid_size  = 32
@@ -93,7 +93,7 @@ class Config(object):
 
     # config for Groups
     group = BaseConfig()
-    group.num_groups = 0        # SRNN training: no groups (benchmark: 3)
+    group.num_groups = 3        # benchmark: 3 groups
 
     group.min_size = 3
     group.max_size = 3          # Stage 2: slightly larger groups
@@ -115,13 +115,13 @@ class Config(object):
 
     # How many of the groups are placed along the robot→goal path to guarantee
     # the robot encounters them. Remaining groups are placed randomly.
-    group.num_on_path = 0       # SRNN training: no groups (benchmark: 2)
+    group.num_on_path = 2       # benchmark: 2 groups on robot's path
 
     # config for realistic pedestrian / group modeling (shared benchmark env)
     # Every sub-flag gates a discrete feature; defaults are *off* so trained
     # checkpoints load bit-exactly. Flip on individually as phases validate.
     realistic = BaseConfig()
-    realistic.enabled = False                   # SRNN training: simple env (no realistic)
+    realistic.enabled = True                    # stageD_sf: full benchmark env with SF pedestrians
     realistic.use_speed_variation = True        # Phase A: Weidmann 1992 v_pref
     realistic.use_group_speed_factor = True     # Phase B: Moussaid 2010 slowdown
     realistic.use_f_formations = True           # Phase C: Kendon 1990 (for static_f groups)
@@ -271,7 +271,7 @@ class Config(object):
     # True/False = individuals only. False/True = groups only (forces every
     # human into a group; clip human_num to total group capacity).
     sim.has_individuals = True
-    sim.has_groups = False      # SRNN training: individuals only (groups re-enabled at eval via config patch)
+    sim.has_groups = True       # stageD_sf: groups required for GRACE perception
     # actual human num in each timestep, in [human_num-human_num_range, human_num+human_num_range]
     sim.human_num_range = 0
     sim.predict_steps = 5
@@ -300,7 +300,7 @@ class Config(object):
     humans.visible = True
     # orca or social_force for now
     # hybrid_orca_social_force
-    humans.policy = "orca"
+    humans.policy = "social_force"
     humans.radius = 0.3
     humans.v_pref = 1
     humans.sensor = "coordinates"
@@ -333,7 +333,7 @@ class Config(object):
     # For baseline: srnn; another method: selfAttn_merge_srnn
     # our method robot.policy = 'selfAttn_merge_srnn'
     # GARN baseline: 'garn'; GRAM-v2: 'gram_v2'; GRACE: 'grace'
-    robot.policy = 'srnn'
+    robot.policy = 'grace'
     robot.radius = 0.3
     robot.v_pref = 1
     robot.sensor = "coordinates"

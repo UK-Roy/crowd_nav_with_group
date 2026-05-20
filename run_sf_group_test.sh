@@ -34,8 +34,10 @@ run_test "social_force"      trained_models/SF_no_rand         00000.pt ""
 run_test "social_force_taga" trained_models/SF_no_rand         00000.pt "--group_avoid"
 
 # ── Learning-based ─────────────────────────────────────────────────────
-run_test "intention_rl"      trained_models/GST_predictor_rand 41665.pt ""
-run_test "intention_rl_taga" trained_models/GST_predictor_rand 41665.pt "--group_avoid"
+run_test "srnn"              trained_models/srnn_bench          30800.pt ""
+run_test "srnn_taga"         trained_models/srnn_bench          30800.pt "--group_avoid"
+run_test "intention_rl"      trained_models/GST_predictor_rand 41665.pt  ""
+run_test "intention_rl_taga" trained_models/GST_predictor_rand 41665.pt  "--group_avoid"
 
 # ── GRACE (ours) — no TAGA version ─────────────────────────────────────
 run_test "grace"             trained_models/gram_map/stageC    best.pt  ""
