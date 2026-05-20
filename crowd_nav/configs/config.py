@@ -93,7 +93,7 @@ class Config(object):
 
     # config for Groups
     group = BaseConfig()
-    group.num_groups = 3        # benchmark: 3 groups
+    group.num_groups = 0        # SRNN training: no groups (benchmark: 3)
 
     group.min_size = 3
     group.max_size = 3          # Stage 2: slightly larger groups
@@ -115,7 +115,7 @@ class Config(object):
 
     # How many of the groups are placed along the robot→goal path to guarantee
     # the robot encounters them. Remaining groups are placed randomly.
-    group.num_on_path = 2       # benchmark: 2 groups on robot's path
+    group.num_on_path = 0       # SRNN training: no groups (benchmark: 2)
 
     # config for realistic pedestrian / group modeling (shared benchmark env)
     # Every sub-flag gates a discrete feature; defaults are *off* so trained
@@ -271,7 +271,7 @@ class Config(object):
     # True/False = individuals only. False/True = groups only (forces every
     # human into a group; clip human_num to total group capacity).
     sim.has_individuals = True
-    sim.has_groups = True       # must be True — frozen backbone needs groups to produce useful embeddings
+    sim.has_groups = False      # SRNN training: individuals only (groups re-enabled at eval via config patch)
     # actual human num in each timestep, in [human_num-human_num_range, human_num+human_num_range]
     sim.human_num_range = 0
     sim.predict_steps = 5
