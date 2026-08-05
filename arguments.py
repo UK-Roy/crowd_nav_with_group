@@ -250,6 +250,15 @@ def get_args():
     parser.add_argument('--grace_adaptive_k_min', type=int, default=1,
                         help='Lower clamp for adaptive K.')
 
+    # ── E1: explicit vs. implicit group representation (CoRL rebuttal) ───────
+    # Mutually exclusive with grace_adaptive_k -- see GRACENetwork.__init__.
+    parser.add_argument('--grace_latent_group_mode', action='store_true',
+                        help='GRACE arm B: zero L6/L7 cost-map channels and feed the '
+                             'same slot embeddings + assignment weights to the planner '
+                             'as a concatenated vector at the fusion layer instead, to '
+                             'isolate whether the spatial rendering format carries the '
+                             'benefit or merely the presence of group information.')
+
     args, _ = parser.parse_known_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()

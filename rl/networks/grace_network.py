@@ -59,6 +59,32 @@ def _build_7d_frame(spatial, velocity, mask):
     return frame * mask.unsqueeze(-1).float()
 
 
+def _slot_summary_stats(alpha, p, vmask):
+    """
+    Per-slot geometric summary, used only by the latent-group arm (E1 arm B) so
+    it receives the same underlying group information as the spatial arm, just
+    not spatially rendered. Mirrors the centroid/spread math CostMapSynthesizer
+    already computes internally, exposed here since arm B needs it outside the
+    synthesizer.
+
+    alpha : (B, K, N)  slot assignment weights
+    p     : (B, N, 2)  human positions, robot-centric
+    vmask : (B, N)     bool, True = visible
+
+    Returns (B, K, 5): mass, centroid_x, centroid_y, spread, assignment entropy
+    """
+    mask_f  = vmask.float().unsqueeze(1)                        # (B,1,N)
+    alpha_m = alpha * mask_f
+    mass    = alpha_m.sum(-1)                                    # (B,K)
+    alpha_n = alpha_m / (mass.unsqueeze(-1) + 1e-8)              # (B,K,N)
+    centroid  = torch.bmm(alpha_n, p)                            # (B,K,2)
+    diff_sq   = ((p.unsqueeze(1) - centroid.unsqueeze(2)) ** 2).sum(-1)  # (B,K,N)
+    spread    = (alpha_n * diff_sq).sum(-1).sqrt()               # (B,K)
+    entropy   = -(alpha_n * (alpha_n + 1e-8).log()).sum(-1)      # (B,K)
+    return torch.cat([mass.unsqueeze(-1), centroid,
+                      spread.unsqueeze(-1), entropy.unsqueeze(-1)], dim=-1)  # (B,K,5)
+
+
 class GRACENetwork(nn.Module):
     """
     Full GRACE network.  Matches the Policy interface expected by model.py:
@@ -137,9 +163,39 @@ class GRACENetwork(nn.Module):
             nn.Linear(128, EMBED_DIM),
         )
 
-        # ── Fusion: planner_feat(256) + robot_feat(64) → 256 ─────────────────
+        # ── E1 arm B: latent-group ablation (default off — arm A is bit-for-bit
+        # unchanged when this flag is off, including parameter count) ─────────
+        # Isolates whether the *spatial* rendering of group belief (L6/L7 cost
+        # channels) carries the benefit, or merely its presence. When on: L6/L7
+        # are zeroed in the cost stack before the CNN sees it, and the same
+        # slot embeddings + assignment weights instead reach the fusion layer
+        # as a concatenated vector. Same frozen Stage A backbone either way —
+        # only the format the planner receives group belief in changes.
+        self.latent_group_mode = getattr(args, 'grace_latent_group_mode', False)
+        if self.latent_group_mode and self.adaptive_k:
+            raise ValueError(
+                "grace_latent_group_mode and grace_adaptive_k are mutually exclusive: "
+                "the adaptive-K path does not return slot embeddings, only assignment "
+                "weights, and the latent-group MLP needs a fixed-width slots tensor. "
+                "E1 is meant to run at arm A's reference config (fixed K) anyway."
+            )
+        group_branch_dim = 0
+        if self.latent_group_mode:
+            # Output width matches robot_mlp's own 64-d convention rather than
+            # GRU_HIDDEN, so the added parameter count stays within ~5% of arm
+            # A's total (measured: +2.8%) -- the plan's own control against
+            # "arm B just got more capacity", which cuts the other way too if
+            # arm B is left oversized rather than undersized.
+            group_mlp_in = K_eff * EMBED_DIM + K_eff * 5   # slots flat + 5 summary stats/slot
+            self.group_mlp = nn.Sequential(
+                nn.Linear(group_mlp_in, 128), nn.ReLU(),
+                nn.Linear(128, EMBED_DIM), nn.ReLU(),
+            )
+            group_branch_dim = EMBED_DIM
+
+        # ── Fusion: planner_feat(256) + robot_feat(64) [+ group_feat(256)] → 256
         self.fusion = nn.Sequential(
-            nn.Linear(GRU_HIDDEN + EMBED_DIM, GRU_HIDDEN), nn.ReLU(),
+            nn.Linear(GRU_HIDDEN + EMBED_DIM + group_branch_dim, GRU_HIDDEN), nn.ReLU(),
         )
 
         # ── Temporal GRU ──────────────────────────────────────────────────────
@@ -243,6 +299,9 @@ class GRACENetwork(nn.Module):
             p.requires_grad_(False)
         for p in self.critic_linear.parameters():
             p.requires_grad_(False)
+        if self.latent_group_mode:
+            for p in self.group_mlp.parameters():
+                p.requires_grad_(False)
         print("[GRACE] Navigation components frozen — only perception will train.")
 
     def load_frozen_backbones(self, detector_path, slot_path, device, freeze=True):
@@ -345,14 +404,17 @@ class GRACENetwork(nn.Module):
 
         no_grad = not self.detector.training
         slot_mask = None
+        slots = None
         with torch.no_grad() if no_grad else torch.enable_grad():
             W_final, _, g, _ = self.detector(feat_flat, vmask_flat)  # (TB,N,64)
             g     = g.nan_to_num(0.0)                             # guard: GD NaN on first unfreeze
             if self.adaptive_k:
                 alpha, slot_mask = self._adaptive_slot_attend(g, vmask_flat, W_final)
             else:
-                _, alpha = self.slot_attn(g, vmask_flat)          # (TB,K,64),(TB,K,N)
+                slots, alpha = self.slot_attn(g, vmask_flat)      # (TB,K,64),(TB,K,N)
         alpha = alpha.nan_to_num(0.0)                             # guard: SA NaN on first unfreeze
+        if slots is not None:
+            slots = slots.nan_to_num(0.0)
 
         # ── Ablation C5: replace alpha with uniform distribution over visible humans ──
         if self.ablation_uniform_alpha:
@@ -373,6 +435,18 @@ class GRACENetwork(nn.Module):
         cost_stack = self.synthesizer(p_flat, v_flat, vmask_flat, goal_flat, alpha,
                                       slot_mask=slot_mask)
         cost_stack = cost_stack.nan_to_num(0.0)   # guard: prevent NaN reaching planner/actor
+
+        # ── E1 arm B: latent-group ablation ────────────────────────────────────
+        # Same slots/alpha the spatial arm renders into L6/L7, but zeroed here and
+        # fed to the planner as a vector instead, isolating rendering format.
+        group_feat = None
+        if self.latent_group_mode:
+            cost_stack = cost_stack.clone()
+            cost_stack[:, 5:7] = 0.0   # L6 (cohesion), L7 (repulsion) — see grace_synthesizer.py channel layout
+            stats = _slot_summary_stats(alpha, p_flat, vmask_flat)          # (TB, K, 5)
+            group_in = torch.cat([slots.reshape(TB, -1), stats.reshape(TB, -1)], dim=-1)
+            group_feat = self.group_mlp(group_in)                           # (TB, 256)
+
         if infer:
             self._last_cost_stack = cost_stack.detach().cpu()
 
@@ -396,7 +470,8 @@ class GRACENetwork(nn.Module):
 
         # ── Robot state fusion ────────────────────────────────────────────────
         rob_feat   = self.robot_mlp(robot_all.reshape(TB, ROBOT_RAW))  # (TB, 64)
-        fused      = self.fusion(torch.cat([map_feat, rob_feat], dim=-1))  # (TB, 256)
+        fusion_in  = [map_feat, rob_feat] if group_feat is None else [map_feat, rob_feat, group_feat]
+        fused      = self.fusion(torch.cat(fusion_in, dim=-1))  # (TB, 256)
 
         # ── GRU unroll ────────────────────────────────────────────────────────
         fused_seq = fused.reshape(seq_length, nenv, GRU_HIDDEN)

@@ -1,0 +1,90 @@
+GRACE E1 arm B (latent-group ablation) — training commands
+============================================================
+
+Context: E1 tests whether the SPATIAL rendering of group belief (cost-map
+channels L6/L7) carries the benefit, or merely its presence. Arm A is the
+existing GRACE checkpoint (trained_models/gram_map/stageC/best.pt). Arm B is
+architecturally identical except L6/L7 are zeroed and the same slot
+embeddings + assignment weights instead reach the planner as a concatenated
+vector at the fusion layer. Same frozen Stage A perception backbone either
+way. Implementation: rl/networks/grace_network.py, flag
+--grace_latent_group_mode (train.py/arguments.py) or --latent_group_mode
+(test.py). Off by default; arm A is architecturally unaffected when the flag
+is off (verified: parameter count and forward/backward pass identical to
+before this flag existed).
+
+Mutually exclusive with --grace_adaptive_k — the adaptive-K path does not
+return slot embeddings, only assignment weights, and the latent-group MLP
+needs a fixed-width slots tensor.
+
+Curriculum: two stages, matching arm A's actual training process (diffed
+directly from trained_models/gram_map/stageB/configs/config.py and
+trained_models/gram_map/stageC/configs/config.py — this is NOT the GRAM-v2
+curriculum documented elsewhere in this repo, it is GRACE's own).
+
+Caveat: the saved arguments.py in both stage directories only records
+default values, not what was actually typed on the command line (e.g.
+output_dir defaults to trained_models/garn there, clearly not what was
+used). The config-side curriculum below is verified via direct diff. The LR
+schedule below is a reasonable reconstruction from this repo's conventions
+(matches the GRAM-v2 curriculum commands documented in CLAUDE.md), not a
+recovered historical log. Check for a saved training log/stdout from the
+original stageB/stageC runs before trusting this LR exactly.
+
+
+Stage B config (crowd_nav/configs/config.py) — edit to:
+---------------------------------------------------------
+  gram_map.freeze_backbone   = True
+  gram_map.use_aux_loss      = False
+  group.num_groups           = 2
+  group.types                = ['static_f', 'dynamic_lf']
+  group.num_on_path          = 1
+  realistic.enabled          = False
+  sim.human_num               = 15
+  sim.circle_radius           = 6
+  sim.arena_size               = 6
+
+Stage B command:
+-----------------
+python train.py --env-name CrowdSimVarNum-v0 \
+  --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+  --output_dir trained_models/gram_map/stageB_armB \
+  --lr 5e-4 --use-linear-lr-decay \
+  --grace_latent_group_mode
+
+
+Stage C config (crowd_nav/configs/config.py) — edit to:
+---------------------------------------------------------
+  gram_map.freeze_backbone   = False
+  gram_map.use_aux_loss      = True
+  group.num_groups           = 3
+  group.types                = ['static_f', 'dynamic_lf', 'dynamic_free']
+  group.num_on_path          = 2
+  realistic.enabled          = True
+  sim.human_num               = 20
+  sim.circle_radius           = 8.5
+  sim.arena_size               = 8.5
+
+Stage C command (resumes from Stage B):
+-----------------------------------------
+python train.py --env-name CrowdSimVarNum-v0 \
+  --human_node_rnn_size 256 --human_human_edge_rnn_size 14 \
+  --output_dir trained_models/gram_map/stageC_armB \
+  --lr 5e-4 --use-linear-lr-decay \
+  --resume --load_path trained_models/gram_map/stageB_armB/checkpoints/best.pt \
+  --grace_latent_group_mode
+
+
+Evaluating the trained arm B checkpoint (once Stage C finishes):
+-------------------------------------------------------------------
+python test.py --model_dir trained_models/gram_map/stageC_armB --test_model best.pt \
+  --test_size 500 --latent_group_mode
+
+Compare directly against the existing arm A reference:
+python test.py --model_dir trained_models/gram_map/stageC --test_model best.pt \
+  --test_size 500
+
+Report side by side: SR, CR, TR, GCR, Reward, plus Group Clearance Margin
+(GCM) if implemented — see GRACE_rebuttal_experiment_plan.md's Table R1
+skeleton for the exact comparison layout (arm A / arm B / arm C=no-group,
+already in Table 5 of the paper as ablation C1, no new run needed for arm C).

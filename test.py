@@ -68,6 +68,11 @@ def main():
                     help='Upper clamp and padded slot width for adaptive K (default 6)')
 	parser.add_argument('--adaptive_k_min', type=int, default=1,
                     help='Lower clamp for adaptive K (default 1)')
+	parser.add_argument('--latent_group_mode', default=False, action='store_true',
+                    help='GRACE E1 arm B: zero L6/L7 cost-map channels, feed the same slot '
+                         'embeddings + assignment weights to the planner as a vector at the '
+                         'fusion layer instead. Requires a checkpoint trained with this flag on '
+                         '-- an arm-A checkpoint has no group_mlp weights to load.')
 	parser.add_argument('--num_groups', type=int, default=None,
                     help='Override config group.num_groups (e.g. 5 to stress-test K beyond the fixed budget)')
 	parser.add_argument('--num_on_path', type=int, default=None,
@@ -259,6 +264,10 @@ def main():
 			if test_args.adaptive_k:
 				print(f'[test] adaptive K on: threshold={test_args.adaptive_k_threshold}, '
 				      f'K range [{test_args.adaptive_k_min}, {test_args.adaptive_k_max}]')
+			algo_args.grace_latent_group_mode = test_args.latent_group_mode
+			if test_args.latent_group_mode:
+				print('[test] latent-group mode on (E1 arm B): L6/L7 zeroed, group info '
+				      'reaches the planner as a fusion-layer vector instead')
 		# load the policy weights
 		actor_critic = Policy(
 			envs.observation_space.spaces,
