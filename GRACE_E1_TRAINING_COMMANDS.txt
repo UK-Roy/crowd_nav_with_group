@@ -31,18 +31,43 @@ schedule below is a reasonable reconstruction from this repo's conventions
 recovered historical log. Check for a saved training log/stdout from the
 original stageB/stageC runs before trusting this LR exactly.
 
+CORRECTION (2026-08-06): the config section is named `grace`, not `gram_map`,
+in the current live crowd_nav/configs/config.py -- `gram_map` was the name
+used when stageB/stageC were originally trained (their saved config
+snapshots still say gram_map.*) but the section has since been renamed.
+test.py's loader checks both names for backward-compatible checkpoint
+loading, but new training must use `grace.*`. Fixed below.
+
+ALSO IMPORTANT: `grace.freeze_nav` is a newer field that did not exist when
+stageB/stageC were first trained, so it is absent from their saved config
+snapshots and was missing from the first version of this file. It currently
+defaults to True in the live config (left over from unrelated SF fine-tuning
+work) and gates a call to GRACENetwork.freeze_nav() in train.py, which
+freezes the planner, GRU, fusion, actor, critic, AND group_mlp. If left at
+True, E1 arm B would train nothing but perception -- silently defeating the
+whole experiment. Must be explicitly set to False for both stages below.
+
+The current live config, as of this correction, already matches Stage C's
+target values on every field except freeze_nav -- it has been sitting at
+stageD_sf-equivalent (full-benchmark) settings. So Stage C below only needs
+one real change from whatever is currently live; Stage B needs the full set.
+Always grep the live file to confirm current values before editing, they
+may have moved again since this was written:
+  grep -nE "freeze_backbone|freeze_nav|use_aux_loss|num_groups =|group.types|num_on_path|realistic.enabled|human_num =|circle_radius|arena_size" crowd_nav/configs/config.py
+
 
 Stage B config (crowd_nav/configs/config.py) — edit to:
 ---------------------------------------------------------
-  gram_map.freeze_backbone   = True
-  gram_map.use_aux_loss      = False
-  group.num_groups           = 2
-  group.types                = ['static_f', 'dynamic_lf']
-  group.num_on_path          = 1
-  realistic.enabled          = False
-  sim.human_num               = 15
-  sim.circle_radius           = 6
-  sim.arena_size               = 6
+  grace.freeze_backbone   = True
+  grace.freeze_nav        = False
+  grace.use_aux_loss      = False
+  group.num_groups        = 2
+  group.types             = ['static_f', 'dynamic_lf']
+  group.num_on_path       = 1
+  realistic.enabled       = False
+  sim.human_num            = 15
+  sim.circle_radius        = 6
+  sim.arena_size            = 6
 
 Stage B command:
 -----------------
@@ -52,18 +77,31 @@ python train.py --env-name CrowdSimVarNum-v0 \
   --lr 5e-4 --use-linear-lr-decay \
   --grace_latent_group_mode
 
+Sanity check once training has produced a checkpoint -- confirm group_mlp
+weights actually exist and are not frozen, i.e. the flag and freeze_nav
+were both applied correctly:
+python -c "
+import torch
+ckpt = torch.load('trained_models/gram_map/stageB_armB/checkpoints/last.pt', map_location='cpu')
+sd = ckpt.get('state_dict', ckpt)
+print([k for k in sd if 'group_mlp' in k][:3])
+"
+Expect to see keys like 'base.group_mlp.0.weight'. Empty list means the flag
+did not take.
+
 
 Stage C config (crowd_nav/configs/config.py) — edit to:
 ---------------------------------------------------------
-  gram_map.freeze_backbone   = False
-  gram_map.use_aux_loss      = True
-  group.num_groups           = 3
-  group.types                = ['static_f', 'dynamic_lf', 'dynamic_free']
-  group.num_on_path          = 2
-  realistic.enabled          = True
-  sim.human_num               = 20
-  sim.circle_radius           = 8.5
-  sim.arena_size               = 8.5
+  grace.freeze_backbone   = False
+  grace.freeze_nav        = False
+  grace.use_aux_loss      = True
+  group.num_groups        = 3
+  group.types             = ['static_f', 'dynamic_lf', 'dynamic_free']
+  group.num_on_path       = 2
+  realistic.enabled       = True
+  sim.human_num            = 20
+  sim.circle_radius        = 8.5
+  sim.arena_size            = 8.5
 
 Stage C command (resumes from Stage B):
 -----------------------------------------
