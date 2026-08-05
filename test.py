@@ -2,6 +2,7 @@ import logging
 import argparse
 import os
 import sys
+import random
 from matplotlib import pyplot as plt
 import numpy
 import torch
@@ -36,10 +37,53 @@ def main():
 	parser.add_argument('--save_slides', default=False, action='store_true')
 	parser.add_argument('--group_avoid', default=False, action='store_true',
                     help='Enable group avoidance (TAGA)')
+	parser.add_argument('--gcr_v2', default=False, action='store_true',
+                    help='Use v2 GCR (hull.contains per step). Default v1 uses GroupIntrusion events (paper numbers).')
 	parser.add_argument('--no_groups', default=False, action='store_true',
                     help='Override config: individuals only (no groups), realistic env kept on')
 	parser.add_argument('--sf_humans', default=False, action='store_true',
                     help='Override config: pedestrians use social_force instead of ORCA')
+	parser.add_argument('--test_size', type=int, default=None,
+                    help='Override config test_size (number of episodes). Default: use value from model config.')
+	parser.add_argument('--gcr_zone_threshold', type=float, default=0.45,
+                    help='Distance (m) from hull boundary that counts as GCR-Zone violation (default: 0.45m).')
+	# Gate ablation flags (disable one TAGA gate at a time for ablation study)
+	parser.add_argument('--disable_g1', default=False, action='store_true',
+                    help='Disable G1 proximity gate (TAGA ablation)')
+	parser.add_argument('--disable_g2', default=False, action='store_true',
+                    help='Disable G2 forward-direction gate (TAGA ablation)')
+	parser.add_argument('--disable_g3', default=False, action='store_true',
+                    help='Disable G3 path-intersection gate (TAGA ablation)')
+	parser.add_argument('--disable_g4', default=False, action='store_true',
+                    help='Disable G4 individual-safety gate (TAGA ablation)')
+	parser.add_argument('--log_suffix', type=str, default='',
+                    help='Suffix appended to log filename (e.g. _no_g1) to avoid overwriting')
+	# GRACE adaptive-K: estimate the group count per frame from the detector's
+	# W_ij scores instead of fixing K=3 (CoRL rebuttal experiment).
+	parser.add_argument('--adaptive_k', default=False, action='store_true',
+                    help='GRACE: estimate K per frame from W_ij instead of fixed K=3')
+	parser.add_argument('--adaptive_k_threshold', type=float, default=0.40,
+                    help='W_ij threshold for the group-count estimate (default 0.40)')
+	parser.add_argument('--adaptive_k_max', type=int, default=6,
+                    help='Upper clamp and padded slot width for adaptive K (default 6)')
+	parser.add_argument('--adaptive_k_min', type=int, default=1,
+                    help='Lower clamp for adaptive K (default 1)')
+	parser.add_argument('--num_groups', type=int, default=None,
+                    help='Override config group.num_groups (e.g. 5 to stress-test K beyond the fixed budget)')
+	parser.add_argument('--num_on_path', type=int, default=None,
+                    help='Override config group.num_on_path (how many groups are guaranteed on the '
+                         'robot path, vs placed randomly). Without this, --num_groups alone only '
+                         'increases the scene total; num_on_path stays capped at its config default '
+                         '(2), so extra groups may never come near the robot. Set close to '
+                         '--num_groups to force the robot to actually encounter them.')
+	# TAGA tuning overrides (sweep parameters without editing config files)
+	parser.add_argument('--nudge_proximity', type=float, default=None,
+                    help='Override taga.nudge_proximity: metres beyond group radius at which G1 allows a nudge')
+	parser.add_argument('--no_cooldown_guard', default=False, action='store_true',
+                    help='Disable the post-nudge emergency stop (restores pre-tuning behaviour)')
+	parser.add_argument('--seed', type=int, default=None,
+                    help='Override the base seed. Episode seeds are base+offset+0..N, so a '
+                         'different base gives a disjoint scenario set (holdout validation).')
 
 	test_args = parser.parse_args()
 	if test_args.save_slides:
@@ -60,6 +104,11 @@ def main():
 		from arguments import get_args
 
 	algo_args = get_args()
+
+	# Seeds every episode as base+offset+index, so a different base yields a
+	# disjoint scenario set rather than a reshuffle of the same ones.
+	if test_args.seed is not None:
+		algo_args.seed = test_args.seed
 
 	# Create a namespace for test-specific args that won't conflict
 	class TestConfig:
@@ -97,6 +146,17 @@ def main():
 	if test_args.sf_humans:
 		config.humans.policy = 'social_force'
 
+	# Override: number of groups. Needed for the adaptive-K stress test, where the
+	# scene must contain more groups than the fixed slot budget can represent.
+	if test_args.num_groups is not None:
+		config.group.num_groups = test_args.num_groups
+		if test_args.num_on_path is not None:
+			config.group.num_on_path = min(test_args.num_on_path, test_args.num_groups)
+		else:
+			config.group.num_on_path = min(config.group.num_on_path, test_args.num_groups)
+		print(f'[test] num_groups overridden to {test_args.num_groups} '
+		      f'(on_path={config.group.num_on_path})')
+
 	# configure logging and device
 	# print test result in log file
 	log_file = os.path.join(test_args.model_dir,'test')
@@ -105,7 +165,8 @@ def main():
 	if test_args.visualize:
 		log_file = os.path.join(test_args.model_dir, 'test', 'test_visual.log')
 	else:
-		log_file = os.path.join(test_args.model_dir, 'test', 'test_' + test_args.test_model + '.log')
+		log_file = os.path.join(test_args.model_dir, 'test',
+		                        'test_' + test_args.test_model + test_args.log_suffix + '.log')
 
 
 	file_handler = logging.FileHandler(log_file, mode='w')
@@ -117,20 +178,15 @@ def main():
 	logging.info('robot FOV %f', config.robot.FOV)
 	logging.info('humans FOV %f', config.humans.FOV)
 
+	# Fix all seeds for reproducibility.
+	# Note: RVO2 has no seed API so ORCA/SF results will still have minor variance.
+	random.seed(algo_args.seed)
 	numpy.random.seed(algo_args.seed)
-
-	# print(f"The robot policy is {config.robot.policy}, creating eval_recurrent_hidden_states")
 	torch.manual_seed(algo_args.seed)
 	torch.cuda.manual_seed_all(algo_args.seed)
-	if algo_args.cuda:
-		if algo_args.cuda_deterministic:
-			# reproducible but slower
-			torch.backends.cudnn.benchmark = False
-			torch.backends.cudnn.deterministic = True
-		else:
-			# not reproducible but faster
-			torch.backends.cudnn.benchmark = True
-			torch.backends.cudnn.deterministic = False
+	# Always force deterministic CUDA ops during testing regardless of cuda_deterministic flag.
+	torch.backends.cudnn.benchmark = False
+	torch.backends.cudnn.deterministic = True
 
 
 	torch.set_num_threads(1)
@@ -141,11 +197,13 @@ def main():
 
 	# set up visualization
 	if test_args.visualize:
-		fig, ax = plt.subplots(figsize=(7, 7))
-		ax.set_xlim(-6.5, 6.5) # 6
-		ax.set_ylim(-6.5, 6.5)
-		ax.axes.xaxis.set_visible(False)
-		ax.axes.yaxis.set_visible(False)
+		fig, ax = plt.subplots(figsize=(9, 9))
+		ax.set_xlim(-10, 10)
+		ax.set_ylim(-10, 10)
+		ax.set_xlabel('x (m)', fontsize=11)
+		ax.set_ylabel('y (m)', fontsize=11)
+		ax.set_aspect('equal')
+		ax.grid(True, linestyle='--', alpha=0.4, linewidth=0.5)
 		# ax.set_xlabel('x(m)', fontsize=16)
 		# ax.set_ylabel('y(m)', fontsize=16)
 		plt.ion()
@@ -172,6 +230,12 @@ def main():
 	env_config.render_traj = test_args.render_traj
 	env_config.save_slides = test_args.save_slides
 	env_config.save_path = os.path.join(test_args.model_dir, 'social_eval', test_args.test_model[:-3])
+	env_config.gcr_zone_threshold = test_args.gcr_zone_threshold
+	# The env wraps its scenario counter modulo env.test_size, so this must be set
+	# before the env is built. Otherwise asking for more episodes than the config
+	# value silently replays the same scenarios and inflates the apparent sample.
+	if test_args.test_size is not None:
+		env_config.env.test_size = test_args.test_size
 	envs = make_vec_envs(env_name, algo_args.seed, 1,
 						 algo_args.gamma, eval_dir, device, allow_early_resets=True,
 						 config=env_config, ax=ax, test_case=test_args.test_case, pretext_wrapper=config.env.use_wrapper)
@@ -185,6 +249,16 @@ def main():
 			grace_cfg = getattr(config, 'grace', None) or getattr(config, 'gram_map', None)
 			algo_args._grace_cfg         = grace_cfg
 			algo_args.grace_use_aux_loss = False   # never compute aux loss during eval
+			# get_args() comes from the model dir's own arguments.py, which
+			# predates these flags, so they have to be injected here rather than
+			# parsed there.
+			algo_args.grace_adaptive_k           = test_args.adaptive_k
+			algo_args.grace_adaptive_k_threshold = test_args.adaptive_k_threshold
+			algo_args.grace_adaptive_k_max       = test_args.adaptive_k_max
+			algo_args.grace_adaptive_k_min       = test_args.adaptive_k_min
+			if test_args.adaptive_k:
+				print(f'[test] adaptive K on: threshold={test_args.adaptive_k_threshold}, '
+				      f'K range [{test_args.adaptive_k_min}, {test_args.adaptive_k_max}]')
 		# load the policy weights
 		actor_critic = Policy(
 			envs.observation_space.spaces,
@@ -203,9 +277,38 @@ def main():
 		actor_critic = None
 
 	test_size = config.env.test_size
+	if test_args.test_size is not None:
+		test_size = test_args.test_size
 
 	# call the evaluation function
-	evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args, test_args.visualize, group_avoid_action=test_args.group_avoid)
+	gcr_method = 'v2' if test_args.gcr_v2 else 'v1'
+	gate_flags = {
+		'g1': not test_args.disable_g1,
+		'g2': not test_args.disable_g2,
+		'g3': not test_args.disable_g3,
+		'g4': not test_args.disable_g4,
+	}
+	taga_overrides = {}
+	if test_args.nudge_proximity is not None:
+		taga_overrides['nudge_proximity'] = test_args.nudge_proximity
+	if test_args.no_cooldown_guard:
+		taga_overrides['cooldown_guard'] = False
+	if taga_overrides:
+		logging.info('TAGA overrides: %s', taga_overrides)
+
+	evaluate(actor_critic, envs, 1, device, test_size, logging, config, algo_args,
+	         test_args.visualize, group_avoid_action=test_args.group_avoid,
+	         gcr_method=gcr_method, gcr_zone_threshold=test_args.gcr_zone_threshold,
+	         gate_flags=gate_flags, taga_overrides=taga_overrides)
+
+	# Report which group counts the detector actually chose, so the adaptive-K
+	# result can be read alongside the distribution that produced it.
+	base = getattr(actor_critic, 'base', None)
+	if base is not None and hasattr(base, 'k_hat_summary'):
+		summary = base.k_hat_summary()
+		if summary:
+			logging.info(summary)
+			print(summary)
 
 
 if __name__ == '__main__':

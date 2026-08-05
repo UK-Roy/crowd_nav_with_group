@@ -206,7 +206,7 @@ def get_args():
     # gst pred: 'CrowdSimPredRealGST-v0'
     parser.add_argument(
         '--env-name',
-        default='CrowdSimPredRealGST-v0',
+        default='CrowdSimVarNum-v0',
         help='name of the environment')
 
 
@@ -237,6 +237,18 @@ def get_args():
                         help='GRAM-Map ablation C5: replace SlotAttention output with uniform alpha.')
     parser.add_argument('--ablation_K_slots', type=int, default=None,
                         help='GRAM-Map ablation C2: override K_SLOTS (default: use built-in K=3).')
+
+    # ── Adaptive K (CoRL rebuttal) ───────────────────────────────────────────
+    # test.py injects these onto algo_args directly, since it loads get_args from
+    # the model directory. Declared here so training runs can use them too.
+    parser.add_argument('--grace_adaptive_k', action='store_true',
+                        help='GRACE: estimate K per frame from W_ij instead of a fixed slot count.')
+    parser.add_argument('--grace_adaptive_k_threshold', type=float, default=0.40,
+                        help='W_ij threshold used by the group-count estimate.')
+    parser.add_argument('--grace_adaptive_k_max', type=int, default=6,
+                        help='Upper clamp and padded slot width for adaptive K.')
+    parser.add_argument('--grace_adaptive_k_min', type=int, default=1,
+                        help='Lower clamp for adaptive K.')
 
     args, _ = parser.parse_known_args()
 

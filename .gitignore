@@ -39,6 +39,7 @@ __MACOSX/
 
 # --- GRAM-v2 generated data (large, not tracked) ---
 gram_v2_data/
+gram_v2_data*/
 
 # --- Scratch / local-only scripts ---
 train1.py
@@ -68,3 +69,40 @@ ral/
 # --- Paper writing folders (local only, not pushed to GitHub) ---
 corl_2026/
 RAL/
+CORL/
+RAL.zip
+
+# --- Separate project, not part of this repo's tracked history ---
+REALWORLD_PERCEPTION/
+
+# --- Presentation / figure / video generation, not core codebase ---
+build_presentation_video.py
+make_overview_video.py
+generate_appendix_figures.py
+generate_cnn_gru_standalone.py
+generate_costmap_legend_standalone.py
+generate_grace_cnn_block.py
+generate_grace_costmap.py
+generate_grace_legend.py
+generate_group_detection_figs.py
+generate_motivation_diagram.py
+generate_narration.py
+generate_slides_template.py
+generate_taga_fig.py
+generate_voiceover.py
+render_appendix_comparisons.py
+render_comparison.py
+render_comparison_video.py
+render_grace_comparison.py
+render_irl_grace_collision.py
+render_irl_grace_video.py
+render_orca_taga_comparison.py
+regen_costmap_figs.py
+scan_gcr_seeds.py
+record_specific_episode.sh
+run_gcr_comparison.sh
+run_taga_test.sh
+icra.sh
+teaserGrace.txt
+grace_architecture_visual.aux
+results_previous/

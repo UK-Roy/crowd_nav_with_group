@@ -1,4 +1,5 @@
 import gym
+import random
 import numpy as np
 from numpy.linalg import norm
 import copy
@@ -117,8 +118,14 @@ class CrowdSimVarNum(CrowdSim):
             self.last_human_states = np.zeros((self.human_num, 5))
 
             # set human ids
-            # for i in range(self.human_num):
-            #     self.humans[i].id = i
+            # Must run after generate_random_human_position(), which reorders
+            # self.humans relative to id-creation order whenever groups are
+            # placed (group members are appended in formation order, not id
+            # order). generate_ob() writes spatial_edges/velocity_edges at
+            # array index self.humans[i].id but visible_masks at list
+            # position i; those only agree when this holds.
+            for i in range(self.human_num):
+                self.humans[i].id = i
 
 
     # generate a human that starts on a circle, and its goal is on the opposite side of the circle
@@ -434,7 +441,15 @@ class CrowdSimVarNum(CrowdSim):
 
         # Sort humans by distance if needed
         if sort:
-            ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x)))
+            # spatial_edges, velocity_edges, and direction_consistency are all
+            # indexed per human slot; sorting spatial_edges alone without
+            # applying the same permutation to the others desyncs them, a
+            # visible-marked slot then reads one human's position paired with
+            # a different (possibly invisible) human's velocity.
+            sort_idx = np.argsort(np.linalg.norm(all_spatial_edges, axis=1))
+            ob['spatial_edges'] = all_spatial_edges[sort_idx]
+            ob['velocity_edges'] = all_velocity_edges[sort_idx]
+            ob['direction_consistency'] = direction_consistency_edges[sort_idx]
             if num_visibles > 0:
                 ob['visible_masks'][:num_visibles] = True
         else:
@@ -687,6 +702,7 @@ class CrowdSimVarNum(CrowdSim):
 
         # here we use a counter to calculate seed. The seed=counter_offset + case_counter
         self.rand_seed = counter_offset[phase] + self.case_counter[phase] + self.thisSeed
+        random.seed(self.rand_seed)
         np.random.seed(self.rand_seed)
 
         self.generate_robot_humans(phase)
@@ -721,10 +737,15 @@ class CrowdSimVarNum(CrowdSim):
         Compute actions for all agents, detect collision, update environment and return (ob, reward, done, info)
         """
         if self.robot.policy.name in ['ORCA', 'social_force']:
-            # assemble observation for orca: px, py, vx, vy, r
-            human_states = copy.deepcopy(self.last_human_states)
-            # get orca action
-            action = self.robot.act(human_states.tolist())
+            # TAGA override: evaluation.py sets this attribute when group_avoid_action fires
+            if getattr(self, 'taga_action_override', None) is not None:
+                action = self.taga_action_override
+                self.taga_action_override = None
+            else:
+                # assemble observation for orca: px, py, vx, vy, r
+                human_states = copy.deepcopy(self.last_human_states)
+                # get orca action
+                action = self.robot.act(human_states.tolist())
         else:
             action = self.robot.policy.clip_action(action, self.robot.v_pref)
 
@@ -758,7 +779,30 @@ class CrowdSimVarNum(CrowdSim):
         self.global_time += self.time_step # max episode length=time_limit/time_step
         self.step_counter =self.step_counter+1
 
-        info={'info':episode_info}
+        # Compute hull flags for GCR v2, GCR-Zone, and GCR-W metrics
+        _rp = np.array([self.robot.px, self.robot.py])
+        _hulls = self.group_hulls or {}
+        _in_hull = bool(any(h.contains(_rp) for h in _hulls.values()))
+        _zone_thresh = getattr(self.config, 'gcr_zone_threshold', 1.0)
+        _in_zone = (not _in_hull) and bool(
+            any(h.distance_to_exterior(_rp) < _zone_thresh for h in _hulls.values())
+        )
+        # GCR-W: linear decay weight — 1.0 if inside hull, decays to 0 at d_zone
+        if _hulls:
+            _min_ext = min(h.distance_to_exterior(_rp) for h in _hulls.values())
+        else:
+            _min_ext = float('inf')
+        _gcr_w = float(max(0.0, 1.0 - _min_ext / _zone_thresh))
+        # Per-group-type hull membership (for GCR-by-type analysis)
+        _hull_group_types = []
+        if _in_hull:
+            _grp_type_map = {g.id: getattr(g, 'group_type', 'unknown')
+                             for g in getattr(self, 'grp', [])}
+            _hull_group_types = [_grp_type_map.get(gid, 'unknown')
+                                 for gid, h in _hulls.items() if h.contains(_rp)]
+        info = {'info': episode_info, 'in_group_hull': _in_hull,
+                'in_group_zone': _in_zone, 'gcr_weight': _gcr_w,
+                'hull_group_types': _hull_group_types}
 
         # Add or remove at most self.human_num_range humans
         # if self.human_num_range == 0 -> human_num is fixed at all times
@@ -999,126 +1043,6 @@ class CrowdSimVarNum(CrowdSim):
 
 
     def render(self, mode='human'):
-        """ Render the current status of the environment using matplotlib """
-        import matplotlib.pyplot as plt
-        import matplotlib.lines as mlines
-        from matplotlib import patches
-
-        plt.rcParams['animation.ffmpeg_path'] = '/usr/bin/ffmpeg'
-
-        robot_color = 'gold'
-        goal_color = 'red'
-        arrow_color = 'red'
-        arrow_style = patches.ArrowStyle("->", head_length=4, head_width=2)
-
-        def calcFOVLineEndPoint(ang, point, extendFactor):
-            # choose the extendFactor big enough
-            # so that the endPoints of the FOVLine is out of xlim and ylim of the figure
-            FOVLineRot = np.array([[np.cos(ang), -np.sin(ang), 0],
-                                   [np.sin(ang), np.cos(ang), 0],
-                                   [0, 0, 1]])
-            point.extend([1])
-            # apply rotation matrix
-            newPoint = np.matmul(FOVLineRot, np.reshape(point, [3, 1]))
-            # increase the distance between the line start point and the end point
-            newPoint = [extendFactor * newPoint[0, 0], extendFactor * newPoint[1, 0], 1]
-            return newPoint
-
-
-
-        ax=self.render_axis
-        artists=[]
-
-        # add goal
-        goal=mlines.Line2D([self.robot.gx], [self.robot.gy], color=goal_color, marker='*', linestyle='None', markersize=15, label='Goal')
-        ax.add_artist(goal)
-        artists.append(goal)
-
-        # add robot
-        robotX,robotY=self.robot.get_position()
-
-        robot=plt.Circle((robotX,robotY), self.robot.radius, fill=True, color=robot_color)
-        ax.add_artist(robot)
-        artists.append(robot)
-
-        # plt.legend([robot, goal], ['Robot', 'Goal'], fontsize=16)
-
-
-        # compute orientation in each step and add arrow to show the direction
-        radius = self.robot.radius
-        arrowStartEnd=[]
-
-        robot_theta = self.robot.theta if self.robot.kinematics == 'unicycle' else np.arctan2(self.robot.vy, self.robot.vx)
-
-        arrowStartEnd.append(((robotX, robotY), (robotX + radius * np.cos(robot_theta), robotY + radius * np.sin(robot_theta))))
-
-        for i, human in enumerate(self.humans):
-            theta = np.arctan2(human.vy, human.vx)
-            arrowStartEnd.append(((human.px, human.py), (human.px + radius * np.cos(theta), human.py + radius * np.sin(theta))))
-
-        arrows = [patches.FancyArrowPatch(*arrow, color=arrow_color, arrowstyle=arrow_style)
-                  for arrow in arrowStartEnd]
-        for arrow in arrows:
-            ax.add_artist(arrow)
-            artists.append(arrow)
-
-
-        # draw FOV for the robot
-        # add robot FOV
-        if self.robot.FOV < 2 * np.pi:
-            FOVAng = self.robot_fov / 2
-            FOVLine1 = mlines.Line2D([0, 0], [0, 0], linestyle='--')
-            FOVLine2 = mlines.Line2D([0, 0], [0, 0], linestyle='--')
-
-
-            startPointX = robotX
-            startPointY = robotY
-            endPointX = robotX + radius * np.cos(robot_theta)
-            endPointY = robotY + radius * np.sin(robot_theta)
-
-            # transform the vector back to world frame origin, apply rotation matrix, and get end point of FOVLine
-            # the start point of the FOVLine is the center of the robot
-            FOVEndPoint1 = calcFOVLineEndPoint(FOVAng, [endPointX - startPointX, endPointY - startPointY], 20. / self.robot.radius)
-            FOVLine1.set_xdata(np.array([startPointX, startPointX + FOVEndPoint1[0]]))
-            FOVLine1.set_ydata(np.array([startPointY, startPointY + FOVEndPoint1[1]]))
-            FOVEndPoint2 = calcFOVLineEndPoint(-FOVAng, [endPointX - startPointX, endPointY - startPointY], 20. / self.robot.radius)
-            FOVLine2.set_xdata(np.array([startPointX, startPointX + FOVEndPoint2[0]]))
-            FOVLine2.set_ydata(np.array([startPointY, startPointY + FOVEndPoint2[1]]))
-
-            ax.add_artist(FOVLine1)
-            ax.add_artist(FOVLine2)
-            artists.append(FOVLine1)
-            artists.append(FOVLine2)
-
-        # add an arc of robot's sensor range
-        sensor_range = plt.Circle(self.robot.get_position(), self.robot.sensor_range + self.robot.radius+self.config.humans.radius, fill=False, linestyle='--')
-        ax.add_artist(sensor_range)
-        artists.append(sensor_range)
-
-        # add humans and change the color of them based on visibility
-        human_circles = [plt.Circle(human.get_position(), human.radius, fill=False, linewidth=1.5) for human in self.humans]
-
-        # hardcoded for now
-        actual_arena_size = self.arena_size + 0.5
-        for i in range(len(self.humans)):
-            ax.add_artist(human_circles[i])
-            artists.append(human_circles[i])
-
-            # green: visible; red: invisible
-            # if self.detect_visible(self.robot, self.humans[i], robot1=True):
-            if self.human_visibility[i]:
-                human_circles[i].set_color(c='g')
-            else:
-                human_circles[i].set_color(c='r')
-            if self.humans[i].id in self.observed_human_ids:
-                human_circles[i].set_color(c='b')
-
-            plt.text(self.humans[i].px - 0.1, self.humans[i].py - 0.1, str(self.humans[i].id), color='black', fontsize=12)
-
-        plt.pause(0.01)
-        for item in artists:
-            item.remove() # there should be a better way to do this. For example,
-            # initially use add_artist and draw_artist later on
-        for t in ax.texts:
-            t.set_visible(False)
+        """Delegate to base CrowdSim render for group-aware colors and hull boundaries."""
+        return super().render(mode)
 

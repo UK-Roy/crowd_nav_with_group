@@ -20,6 +20,8 @@ Grid convention:
   - default 32×32 at 6m range → 0.375 m/cell
 """
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 
@@ -82,13 +84,21 @@ class CostMapSynthesizer(nn.Module):
                 v_cur: torch.Tensor,
                 vmask: torch.Tensor,
                 goal:  torch.Tensor,
-                alpha: torch.Tensor) -> torch.Tensor:
+                alpha: torch.Tensor,
+                slot_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         p_cur : (B, N, 2)  human positions in robot-centric frame
         v_cur : (B, N, 2)  human velocities (robot-frame-aligned)
         vmask : (B, N)     bool, True = visible
         goal  : (B, 2)     goal vector in robot-centric frame
         alpha : (B, K, N)  soft slot assignments from SlotAttention
+        slot_mask : (B, K) bool or None. False marks a slot that carries no group
+                    and must not be rendered. Needed under adaptive K, where the
+                    slot dimension is padded to a fixed width so the batch keeps
+                    a single shape while samples use different slot counts.
+                    A padded slot has all-zero alpha, which would otherwise
+                    normalise to a centroid at the origin and splat a phantom
+                    group directly on the robot.
 
         Returns cost_stack : (B, C, H, W)
         """
@@ -128,11 +138,18 @@ class CostMapSynthesizer(nn.Module):
             diff_grp   = self.grid[None, None] - centroid[:, :, None, None]  # (B,K,H,W,2)
             dsq_grp    = (diff_grp ** 2).sum(-1)                              # (B,K,H,W)
             grp_gauss  = torch.exp(-dsq_grp / (2 * sigma_g ** 2))            # (B,K,H,W)
+            repulsion  = torch.exp(-dsq_grp / (2 * (sigma_g * 2.0) ** 2))
+
+            # Suppress inactive slots before the max so they cannot win it.
+            if slot_mask is not None:
+                keep = slot_mask.to(grp_gauss.dtype)[:, :, None, None]   # (B,K,1,1)
+                grp_gauss = grp_gauss * keep
+                repulsion = repulsion * keep
+
             group_lyr  = grp_gauss.max(1).values.clamp(0, 1).unsqueeze(1)    # (B,1,H,W)
             layers.append(group_lyr)
 
             # ── L4: Group repulsion halo (wider sigma — early-warning zone) ───
-            repulsion  = torch.exp(-dsq_grp / (2 * (sigma_g * 2.0) ** 2))
             repulsion_lyr = repulsion.max(1).values.clamp(0, 1).unsqueeze(1)
             layers.append(repulsion_lyr)
 

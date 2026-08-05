@@ -164,6 +164,7 @@ Trade-off: higher resolution = more spatial fidelity but quadratic FLOPs.
 | `train.py` | ✅ Done | backbone loading + aux loss injection |
 | `test.py` | ✅ Done | aux loss disabled at eval |
 | `rl/ppo/ppo.py` | ✅ Done | `_aux_loss` hook (3 lines) |
+| `crowd_nav/grace_perception/adaptive_k.py` | ✅ Done | `estimate_k()` — group count from `W_ij` via thresholded connected components |
 
 ### Run flags (same as GRAM-v2)
 
@@ -172,6 +173,30 @@ Trade-off: higher resolution = more spatial fidelity but quadratic FLOPs.
 --human_node_rnn_size 256
 --human_human_edge_rnn_size 14
 ```
+
+### Adaptive K (evaluation-time, default off)
+
+Estimates the slot count per frame from the detector's own groupness scores instead of
+fixing `K=3`, removing the need to know the number of groups in advance. No retraining
+is required: no learned parameter in `SlotAttention` is sized by K, so a K=3 checkpoint
+evaluates at any K.
+
+```bash
+--adaptive_k                      # on
+--adaptive_k_threshold 0.40       # W_ij threshold for the estimate
+--adaptive_k_max 6                # upper clamp and padded slot width
+--adaptive_k_min 1                # lower clamp
+--num_groups 5                    # override group count, for >K stress tests
+```
+
+Each run prints and logs the distribution the detector chose:
+
+```
+[adaptive-K] mean K_hat=1.47 over 217 frames   K=0:7.4%  K=1:37.8%  K=2:54.8%
+```
+
+Status and caveats in `GRACE_EXPERIMENT_LOG.md`, Exp 01. Unit-verified but **not yet
+validated at 500 episodes**.
 
 ### Training commands
 

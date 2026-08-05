@@ -32,6 +32,7 @@ import torch.nn as nn
 
 from crowd_nav.grace_perception.models import GroupDetector, FEAT_DIM, INPUT_DIM
 from crowd_nav.grace_perception.slot_attention import SlotAttention
+from crowd_nav.grace_perception.adaptive_k import estimate_k
 from rl.networks.grace_synthesizer import CostMapSynthesizer, OccupancyHead, CostMapPlanner
 
 MAX_HUMANS  = 20
@@ -97,6 +98,18 @@ class GRACENetwork(nn.Module):
         K_eff = getattr(args, 'ablation_K_slots', None) or K_SLOTS
         self.K_eff = K_eff
 
+        # ── Adaptive K: estimate the group count per frame from W_ij ──────────
+        # Off by default, so fixed-K behaviour is bit-identical to before. When
+        # on, K_eff only sets the padded slot width; the count actually used per
+        # frame comes from the detector.
+        self.adaptive_k        = getattr(args, 'grace_adaptive_k',           False)
+        self.adaptive_k_thresh = getattr(args, 'grace_adaptive_k_threshold', 0.40)
+        self.adaptive_k_max    = int(getattr(args, 'grace_adaptive_k_max',   6))
+        self.adaptive_k_min    = int(getattr(args, 'grace_adaptive_k_min',   1))
+        # Histogram over estimated counts, for reporting what the detector chose.
+        self.k_hat_hist  = [0] * (self.adaptive_k_max + 1)
+        self.k_hat_total = 0
+
         if self.ablation_no_aux_loss:        # C4 hard-overrides aux loss
             self.use_aux_loss = False
 
@@ -152,10 +165,64 @@ class GRACENetwork(nn.Module):
         self._aux_loss        = None   # set during forward when use_aux_loss=True
         self._last_cost_stack = None   # set during infer=True for visualization
         self._last_alpha      = None   # (1, K, N) slot→human assignments for visualization
+        self._last_W_final    = None   # (1, N, N) groupness matrix for visualization
 
     @property
     def recurrent_hidden_state_size(self) -> int:
         return GRU_HIDDEN
+
+    def _adaptive_slot_attend(self, g, vmask, W_final):
+        """
+        Run SlotAttention with a per-frame slot count estimated from W_ij.
+
+        Returns
+        -------
+        alpha     : (B, K_max, N)  assignments, zero-padded past the frame's count
+        slot_mask : (B, K_max)     bool, True where a slot carries a real group
+
+        Samples are grouped by their estimated count and each group gets its own
+        SlotAttention call, so the competitive softmax runs over exactly the
+        number of slots that frame was assigned. Running everything at K_max and
+        discarding the surplus afterwards would not be equivalent: the softmax is
+        taken across slots, so the number of competing slots changes the
+        assignments themselves.
+        """
+        B, N = vmask.shape[0], vmask.shape[1]
+        k_hat = estimate_k(W_final, vmask, threshold=self.adaptive_k_thresh)  # (B,)
+        k_run = k_hat.clamp(min=self.adaptive_k_min, max=self.adaptive_k_max)
+
+        alpha     = g.new_zeros(B, self.adaptive_k_max, N)
+        slot_mask = torch.zeros(B, self.adaptive_k_max, dtype=torch.bool,
+                                device=g.device)
+
+        for k in k_run.unique().tolist():
+            idx = (k_run == k).nonzero(as_tuple=True)[0]
+            k = int(k)
+            _, a_k = self.slot_attn(g[idx], vmask[idx], K=k)      # (b,k,N)
+            alpha[idx, :k]     = a_k.to(alpha.dtype)
+            slot_mask[idx, :k] = True
+
+        # A frame the detector reads as having no groups keeps its slot running
+        # (K is clamped to at least 1 so the call is well formed) but renders
+        # nothing, which is the correct behaviour for a group-free scene.
+        slot_mask = slot_mask & (k_hat > 0).unsqueeze(1)
+
+        for k in k_hat.clamp(max=self.adaptive_k_max).tolist():
+            self.k_hat_hist[int(k)] += 1
+        self.k_hat_total += k_hat.numel()
+
+        return alpha, slot_mask
+
+    def k_hat_summary(self) -> str:
+        """One-line report of the group counts the detector chose. Empty when
+        adaptive K was never used, so callers can print unconditionally."""
+        if not self.adaptive_k or self.k_hat_total == 0:
+            return ''
+        n = self.k_hat_total
+        mean = sum(i * c for i, c in enumerate(self.k_hat_hist)) / n
+        dist = '  '.join(f'K={i}:{100.0 * c / n:.1f}%'
+                         for i, c in enumerate(self.k_hat_hist) if c)
+        return f'[adaptive-K] mean K_hat={mean:.2f} over {n} frames   {dist}'
 
     def freeze_nav(self):
         """Freeze navigation components (planner, GRU, actor, critic).
@@ -277,10 +344,14 @@ class GRACENetwork(nn.Module):
         vmask_flat = vmask_all.reshape( TB, N_actual)
 
         no_grad = not self.detector.training
+        slot_mask = None
         with torch.no_grad() if no_grad else torch.enable_grad():
-            _, _, g, _ = self.detector(feat_flat, vmask_flat)     # (TB,N,64)
+            W_final, _, g, _ = self.detector(feat_flat, vmask_flat)  # (TB,N,64)
             g     = g.nan_to_num(0.0)                             # guard: GD NaN on first unfreeze
-            _, alpha = self.slot_attn(g, vmask_flat)              # (TB,K,64),(TB,K,N)
+            if self.adaptive_k:
+                alpha, slot_mask = self._adaptive_slot_attend(g, vmask_flat, W_final)
+            else:
+                _, alpha = self.slot_attn(g, vmask_flat)          # (TB,K,64),(TB,K,N)
         alpha = alpha.nan_to_num(0.0)                             # guard: SA NaN on first unfreeze
 
         # ── Ablation C5: replace alpha with uniform distribution over visible humans ──
@@ -288,16 +359,19 @@ class GRACENetwork(nn.Module):
             vmask_f = vmask_flat.float()                                   # (TB, N)
             vis_n   = vmask_f.sum(dim=-1, keepdim=True).clamp(min=1.0)     # (TB, 1)
             uniform = (vmask_f / vis_n).unsqueeze(1)                       # (TB, 1, N)
-            alpha   = uniform.expand(-1, self.K_eff, -1).contiguous()      # (TB, K, N)
+            uniform = uniform.expand(-1, alpha.shape[1], -1).contiguous()  # (TB, K, N)
+            alpha   = uniform
         if infer:
-            self._last_alpha = alpha.detach().cpu()               # (TB, K, N) for visualization
+            self._last_alpha   = alpha.detach().cpu()             # (TB, K, N) for visualization
+            self._last_W_final = W_final.detach().cpu()           # (TB, N, N) for visualization
 
         # ── Cost-map synthesis ────────────────────────────────────────────────
         p_flat    = p_all.reshape(TB, N_actual, 2)
         v_flat    = v_all.reshape(TB, N_actual, 2)
         goal_flat = goal_all.reshape(TB, 2)
 
-        cost_stack = self.synthesizer(p_flat, v_flat, vmask_flat, goal_flat, alpha)
+        cost_stack = self.synthesizer(p_flat, v_flat, vmask_flat, goal_flat, alpha,
+                                      slot_mask=slot_mask)
         cost_stack = cost_stack.nan_to_num(0.0)   # guard: prevent NaN reaching planner/actor
         if infer:
             self._last_cost_stack = cost_stack.detach().cpu()

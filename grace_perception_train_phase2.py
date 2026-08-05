@@ -184,6 +184,14 @@ def main():
     parser.add_argument('--lambda-aux', type=float, default=0.3,
                         help='Weight on W0 auxiliary loss')
     parser.add_argument('--gnn-layers', type=int,   default=3)
+    parser.add_argument('--edge-dropout', type=float, default=0.0,
+                        help='DropEdge-style regularization: fraction of edges in W0 randomly '
+                             'masked before GNN message passing, training only. Default 0.0 = off, '
+                             'matches every existing checkpoint. On real ETH/UCY data the pre-GNN '
+                             'groupness (W0) consistently outranks the post-GNN output on AUROC, '
+                             'meaning the GNN currently amplifies uncertainty in its input rather '
+                             'than discounting it; this is meant to make it more conservative. '
+                             'Untested — try 0.1-0.2 as a starting point.')
     parser.add_argument('--workers',    type=int,   default=4)
     parser.add_argument('--no-cuda',    action='store_true')
     args = parser.parse_args()
@@ -218,9 +226,11 @@ def main():
         del _p1
 
     model = GroupDetector(n_gnn_layers=args.gnn_layers,
-                          use_pairwise_temporal=use_pt).to(device)
+                          use_pairwise_temporal=use_pt,
+                          edge_dropout_p=args.edge_dropout).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"GroupDetectorV2  params: {n_params:,}  use_pairwise_temporal={use_pt}")
+    print(f"GroupDetectorV2  params: {n_params:,}  use_pairwise_temporal={use_pt}  "
+          f"edge_dropout_p={args.edge_dropout}")
 
     # Load Phase 1 weights into encoder + edge_net
     if os.path.exists(args.phase1):

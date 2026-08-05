@@ -194,10 +194,12 @@ class GroupDetector(nn.Module):
     def __init__(self, input_dim: int = INPUT_DIM, embed_dim: int = EMBED_DIM,
                  enc_hidden: int = 256, gnn_hidden: int = 256,
                  n_gnn_layers: int = 0, dropout: float = 0.1,
-                 use_pairwise_temporal: bool = False):
+                 use_pairwise_temporal: bool = False,
+                 edge_dropout_p: float = 0.0):
         super().__init__()
         self.feat_dim              = FEAT_DIM
         self.use_pairwise_temporal = use_pairwise_temporal
+        self.edge_dropout_p        = edge_dropout_p
         self.encoder  = PedestrianEncoder(input_dim, enc_hidden, embed_dim, dropout)
         self.edge_net = PairwiseEdgeNetwork(embed_dim, use_pairwise_temporal)
 
@@ -228,7 +230,24 @@ class GroupDetector(nn.Module):
         W0 = self.edge_net(h0, curr_feats, mask, full_feats)
 
         if self.gnn is not None:
-            g       = self.gnn(h0, W0, mask)
+            W0_in = W0
+            if self.training and self.edge_dropout_p > 0:
+                # DropEdge-style regularization: randomly mask a fraction of
+                # edges before message passing (training only, W0 itself is
+                # untouched since it's still the auxiliary loss target). Real
+                # data never produces a graph as clean as simulation gives
+                # this GNN at train time; on real ETH/UCY sequences the
+                # pre-GNN groupness (W0) consistently outranks the post-GNN
+                # output on AUROC, meaning the refinement step currently
+                # amplifies whatever uncertainty is already in its input
+                # rather than discounting it. Forcing the GNN to cope with a
+                # randomly-incomplete graph during training is meant to
+                # teach it not to over-trust any single edge.
+                rand     = torch.rand_like(W0)
+                rand_sym = (rand + rand.transpose(-2, -1)) / 2   # symmetric draw, keep[i,j] == keep[j,i]
+                keep     = (rand_sym >= self.edge_dropout_p).float()
+                W0_in    = W0 * keep
+            g       = self.gnn(h0, W0_in, mask)
             W_final = self.edge_net(g, curr_feats, mask, full_feats)
         else:
             g       = h0

@@ -288,8 +288,11 @@ class CrowdSim(gym.Env):
 
             if grp.group_type == 'static_f':
                 # Phase C: F-formation layout, members don't move
+                # Seed the rng from the global np.random state so F-formation
+                # positions are deterministic given the episode seed.
+                _f_rng = np.random.default_rng(np.random.randint(2**31))
                 self.humans = apply_f_formation(grp, self.robot, self.humans,
-                                                self.config)
+                                                self.config, rng=_f_rng)
                 for mem in grp.members:
                     mem.isObstacle = True
             else:
@@ -317,9 +320,16 @@ class CrowdSim(gym.Env):
         """Place groups so the robot is likely to encounter them.
 
         The first `num_on_path` groups are staggered along the robot→goal
-        vector at evenly-spaced fractions (e.g. 0.40 and 0.70 for 2 groups).
-        A small random lateral offset is added so groups aren’t always
-        perfectly on-axis. The remaining groups are placed randomly.
+        vector at evenly-spaced fractions (e.g. 0.40 and 0.70 for 2 groups),
+        then jittered laterally with the same min-distance rejection
+        sampling the off-path groups use below, widening the search range
+        on repeated failures. Path length is bounded by the arena, so a
+        purely 1-D stagger runs out of room once num_on_path grows past two
+        or three; letting failures push outward laterally (rather than
+        silently overlapping) keeps on-path groups individually detectable
+        instead of merging into one blob. At the default num_on_path=2 this
+        almost never rejects, so placement is unchanged from before in the
+        common case. The remaining groups are placed randomly.
         """
         all_centroids = []
         min_distance = self.min_group_distance
@@ -340,18 +350,27 @@ class CrowdSim(gym.Env):
         perp_x = -dy / (path_len + 1e-6)
         perp_y =  dx / (path_len + 1e-6)
 
+        max_attempts = 100
+        base_lateral = 0.5
+
         for i, group in enumerate(self.grp):
             if i < num_on_path:
                 frac = on_path_fractions[i]
-                # Small lateral jitter (±0.5 m) keeps the group in the path
-                # but avoids stacking groups on the exact same line.
-                jitter = np.random.uniform(-0.5, 0.5)
-                cx = self.robot.px + frac * dx + jitter * perp_x
-                cy = self.robot.py + frac * dy + jitter * perp_y
-                # Clamp to arena
-                cx = float(np.clip(cx, -self.arena_size, self.arena_size))
-                cy = float(np.clip(cy, -self.arena_size, self.arena_size))
-                group.set_centroid(cx, cy)
+                base_cx = self.robot.px + frac * dx
+                base_cy = self.robot.py + frac * dy
+                placed = False
+                for attempt in range(max_attempts):
+                    jitter_scale = base_lateral * (1 + attempt // 20)
+                    jitter = np.random.uniform(-jitter_scale, jitter_scale)
+                    cx = float(np.clip(base_cx + jitter * perp_x, -self.arena_size, self.arena_size))
+                    cy = float(np.clip(base_cy + jitter * perp_y, -self.arena_size, self.arena_size))
+                    if all(np.linalg.norm(np.array([cx, cy]) - np.array(c)) >= (min_distance + self.group_max_radius)
+                           for c in all_centroids):
+                        group.set_centroid(cx, cy)
+                        placed = True
+                        break
+                if not placed:
+                    group.set_centroid(*self.generate_non_overlapping_centroid(all_centroids, min_distance))
             else:
                 group.set_centroid(*self.generate_non_overlapping_centroid(all_centroids, min_distance))
 
@@ -620,7 +639,9 @@ class CrowdSim(gym.Env):
         counter_offset = {'train': self.case_capacity['val'] + self.case_capacity['test'],
                           'val': 0, 'test': self.case_capacity['val']}
 
-        np.random.seed(counter_offset[phase] + self.case_counter[phase] + self.thisSeed)
+        _seed = counter_offset[phase] + self.case_counter[phase] + self.thisSeed
+        random.seed(_seed)
+        np.random.seed(_seed)
 
         self.generate_robot_humans(phase)
 

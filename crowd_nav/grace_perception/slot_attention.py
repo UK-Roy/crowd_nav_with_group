@@ -92,23 +92,32 @@ class SlotAttention(nn.Module):
             nn.Linear(slot_dim * 4, slot_dim),
         )
 
-    def forward(self, g: torch.Tensor, mask: torch.Tensor):
+    def forward(self, g: torch.Tensor, mask: torch.Tensor,
+                K: Optional[int] = None):
         """
         g    : (B, N, embed_dim)   GNN-refined human embeddings
         mask : (B, N)              bool, True = visible human
+        K    : optional slot count for this call, overriding self.K
 
         Returns
         -------
         slots : (B, K, slot_dim)
         attn  : (B, K, N)   final-iteration attention weights (softmax over K)
+
+        None of the learned parameters are sized by K: slot_mu and slot_logsigma
+        are a single shared Gaussian that is expanded to however many slots are
+        requested, and every projection acts per-slot. So a checkpoint trained at
+        one slot count can be evaluated at another with no weight surgery, which
+        is what the adaptive-K experiment relies on.
         """
         B, _, _ = g.shape
+        K = self.K if K is None else int(K)
 
         # ── Sample slot initialisations ──────────────────────────────────────
-        mu    = self.slot_mu.expand(B, self.K, -1)               # (B, K, D)
-        sigma = self.slot_logsigma.exp().expand(B, self.K, -1)
+        mu    = self.slot_mu.expand(B, K, -1)                    # (B, K, D)
+        sigma = self.slot_logsigma.exp().expand(B, K, -1)
         slots = mu + sigma * torch.randn(
-            B, self.K, self.slot_dim, device=g.device, dtype=g.dtype)
+            B, K, self.slot_dim, device=g.device, dtype=g.dtype)
 
         # ── Project inputs ───────────────────────────────────────────────────
         g_ln = self.norm_input(g)
@@ -136,9 +145,9 @@ class SlotAttention(nn.Module):
 
             # GRU update (flatten batch × slots for GRUCell)
             slots = self.gru(
-                updates.reshape(B * self.K, self.slot_dim),
-                prev.reshape(   B * self.K, self.slot_dim),
-            ).reshape(B, self.K, self.slot_dim)
+                updates.reshape(B * K, self.slot_dim),
+                prev.reshape(   B * K, self.slot_dim),
+            ).reshape(B, K, self.slot_dim)
 
             # Residual FF
             slots = slots + self.ff(self.norm_ff(slots))
